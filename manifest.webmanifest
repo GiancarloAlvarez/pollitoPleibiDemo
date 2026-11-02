@@ -1,0 +1,28 @@
+{
+  "name": "Pollito Pleibi · Operaciones",
+  "short_name": "Pollito Pleibi",
+  "description": "Sistema de ventas, inventario y operaciones para food truck. Funciona offline y sincroniza con Supabase.",
+  "lang": "es-DO",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fff8ea",
+  "theme_color": "#262b5a",
+  "categories": ["business", "productivity", "food"],
+  "icons": [
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/apple-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

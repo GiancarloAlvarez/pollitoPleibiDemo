@@ -1,0 +1,20 @@
+{
+  "name": "pollito-pleibi-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Entorno de testing E2E e integración para la app vanilla Pollito Pleibi",
+  "scripts": {
+    "server": "node --env-file=.env server.js",
+    "test": "node --env-file=.env e2e-smoke.js",
+    "test:remote": "node --env-file=.env supabase-integration.js",
+    "install-browsers": "npx playwright-core install chromium"
+  },
+  "dependencies": {
+    "playwright-core": "^1.57.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20"
+  }
+}
