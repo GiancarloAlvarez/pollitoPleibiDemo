@@ -1,5 +1,5 @@
 const DB_NAME = 'pollito-pleibi-db';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 
 export const STORES = {
   PRODUCTS: 'products',
@@ -11,6 +11,8 @@ export const STORES = {
   SETTINGS: 'settings',
   OUTBOX: 'outbox',
   META: 'meta',
+  LAN_OUTBOX: 'lan_outbox',
+  CASH_SESSIONS: 'cash_sessions',
 };
 
 const ALL_STORES = Object.values(STORES);
@@ -190,6 +192,21 @@ export async function dbCount(store) {
 export async function dbReady() {
   const db = await openDb();
   return Boolean(db) || fallback;
+}
+
+// Una orden pendiente y su cola LAN deben confirmarse juntas, nunca en dos escrituras.
+export async function dbAtomicPut(entries) {
+  const db = await openDb();
+  if (!db) throw new Error('No se pudo abrir el almacenamiento seguro del dispositivo. No se confirmó la operación.');
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([...new Set(entries.map(entry => entry.store))], 'readwrite');
+    try {
+      for (const entry of entries) tx.objectStore(entry.store).put(entry.value);
+    } catch (error) { tx.abort(); reject(error); return; }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('No se guardó la operación.'));
+  });
 }
 
 export function usingFallback() {

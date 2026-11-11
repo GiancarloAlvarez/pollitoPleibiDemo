@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pollito Pleibi">
+  <rect width="64" height="64" rx="13" fill="#fff8ea"/>
+  <path d="M16 34h32l5 24H11z" fill="#142c66"/>
+  <path d="M25 33l7 9 8-9 3 25H21z" fill="#234c9e"/>
+  <path d="M22 35l10 7-8 6-7-12m25-1l-10 7 8 6 7-12" fill="#0b1f49"/>
+  <path d="M23 14c-3-7 1-11 6-6 0-8 7-8 8 0 5-4 10 1 5 7" fill="#f5aa13" stroke="#c97c09" stroke-width="1.5"/>
+  <path d="M18 21c0-10 7-15 16-15 10 0 15 7 15 16 0 11-7 17-17 17-10 0-17-7-14-18z" fill="#ffd12f" stroke="#c58a0d" stroke-width="1.5"/>
+  <path d="M19 22l-6 5 8 2" fill="#ffb723"/>
+  <ellipse cx="28" cy="20" rx="2" ry="2.7" fill="#15264c"/>
+  <ellipse cx="41" cy="20" rx="2" ry="2.7" fill="#15264c"/>
+  <circle cx="27.5" cy="19" r=".6" fill="white"/><circle cx="40.5" cy="19" r=".6" fill="white"/>
+  <path d="M31 25l5-2 5 3-6 5z" fill="#ee8d16" stroke="#b9660b" stroke-width="1"/>
+  <path d="M22 29l4 1m17-1l3-1" stroke="#f2a31a" stroke-width="3" stroke-linecap="round"/>
+  <path d="M27 37l5 5 6-5-2 10h-7z" fill="#fff8ea"/>
+  <path d="M30 42h4l1 10-3 4-3-4z" fill="#ffc72c"/>
+  <circle cx="40" cy="52" r="1" fill="#f4b828"/>
+</svg>

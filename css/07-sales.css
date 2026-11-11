@@ -1,0 +1,16 @@
+/* Componentes de caja y comprobante: reglas acotadas a estas vistas. */
+.cash-session-controls { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.cash-session-controls .cash-status { white-space:normal; }
+.orders-receipts { padding:20px; }
+.orders-receipts .table-scroll { overflow-x:auto; }
+.orders-receipts table { width:100%; border-collapse:collapse; }
+.orders-receipts th, .orders-receipts td { padding:12px; text-align:left; }
+.orders-receipts input { max-width:100%; margin:10px 0 20px; }
+.commercial-receipt { background:#fff; color:#171717; padding:18px; border:1px solid #ccc; margin:16px 0; overflow-wrap:anywhere; }
+.commercial-receipt header, .commercial-receipt footer { text-align:center; }
+.commercial-receipt p { color:#171717; margin:12px 0; }
+.commercial-receipt h2, .commercial-receipt h3 { color:#171717; }
+.commercial-receipt table { width:100%; border-collapse:collapse; font-size:12px; }
+.commercial-receipt th, .commercial-receipt td { color:#171717; padding:5px 2px; text-align:right; border-bottom:1px solid #ccc; }
+.commercial-receipt th:first-child, .commercial-receipt td:first-child { text-align:left; }
+@media(max-width:600px) { .cash-session-controls { justify-content:flex-start; width:100%; } .orders-receipts { padding:12px; } }

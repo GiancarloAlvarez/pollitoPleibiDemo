@@ -1,5 +1,5 @@
 import {
-  STORES, dbGetAll, dbGet, dbPut, dbCount,
+  STORES, dbGetAll, dbGet, dbPut, dbCount, dbAtomicPut,
 } from './db.js';
 import { buildSeed, DEMO_PASSWORD } from '../data/seed.js';
 import {
@@ -7,7 +7,9 @@ import {
 } from './utils.js';
 import { SCHEMA_VERSION } from '../config.js';
 import { store, state, loadCart, saveCart } from './state.js';
-import { queueChange } from './sync.js';
+import { refreshPending, scheduleSync } from './sync.js';
+import { requireRole } from './permissions.js';
+import { localEnabled, localData, localCommand } from './local-client.js';
 
 let cartInitialized = false;
 
@@ -61,6 +63,13 @@ function byDateAsc(field) {
 }
 
 async function readData() {
+  if (localEnabled()) {
+    const data = localData();
+    const settings = (data.settings || []).find(row => row.key === 'app') || {};
+    return { products: activeRows(data.products), orders: activeRows(data.orders).sort(byDateDesc('created_at')),
+      inventory: activeRows(data.inventory), users: activeRows(data.users), suppliers: activeRows(data.suppliers),
+      movements: activeRows(data.movements), settings: { ...DEFAULT_SETTINGS, ...settings } };
+  }
   const [products, orders, inventory, users, suppliers, movements, settingsRows] = await Promise.all([
     dbGetAll(STORES.PRODUCTS),
     dbGetAll(STORES.ORDERS),
@@ -72,6 +81,7 @@ async function readData() {
   ]);
   const settingsRow = settingsRows.find(row => row.key === 'app') || DEFAULT_SETTINGS;
   return {
+    cash_sessions: await dbGetAll(STORES.CASH_SESSIONS),
     products: activeRows(products).sort(byDateAsc('created_at')),
     orders: activeRows(orders).sort(byDateDesc('created_at')),
     inventory: activeRows(inventory).sort(byDateAsc('created_at')),
@@ -83,7 +93,7 @@ async function readData() {
 }
 
 export async function initRepo() {
-  await ensureSeed();
+  if (!localEnabled()) await ensureSeed();
   const data = await readData();
   Object.assign(state, data);
   if (!cartInitialized) {
@@ -113,12 +123,21 @@ export function orderTotals(items) {
 }
 
 async function persist(table, row) {
-  await dbPut(table, row);
-  await queueChange(table, 'upsert', row);
+  if (localEnabled()) {
+    return localCommand('entity.upsert', { store: table, row }, { row, store: table });
+  }
+  await dbAtomicPut([
+    { store: table, value: row },
+    { store: STORES.OUTBOX, value: { id: uid(), table, op: 'upsert', payload: row,
+      created_at: new Date().toISOString(), attempts: 0 } },
+  ]);
+  await refreshPending();
+  scheduleSync(1200);
   return row;
 }
 
 export async function saveProduct(input) {
+  requireRole();
   const name = String(input.name || '').trim();
   const price = Number(input.price);
   if (!name) throw new Error('El nombre del producto es obligatorio.');
@@ -144,6 +163,7 @@ export async function saveProduct(input) {
 }
 
 export async function toggleProduct(id) {
+  requireRole();
   const row = await dbGet(STORES.PRODUCTS, id);
   if (!row) throw new Error('Producto no encontrado.');
   const updated = { ...row, available: !row.available, updated_at: new Date().toISOString() };
@@ -153,6 +173,7 @@ export async function toggleProduct(id) {
 }
 
 export async function deleteProduct(id) {
+  requireRole();
   const row = await dbGet(STORES.PRODUCTS, id);
   if (!row) return false;
   const updated = { ...row, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
@@ -162,6 +183,7 @@ export async function deleteProduct(id) {
 }
 
 export async function saveInventory(input) {
+  requireRole();
   const name = String(input.name || '').trim();
   if (!name) throw new Error('El nombre del insumo es obligatorio.');
   const now = new Date().toISOString();
@@ -190,6 +212,7 @@ export async function saveInventory(input) {
 }
 
 export async function addInventoryEntry(input) {
+  requireRole();
   const itemId = String(input.itemId || '');
   if (!itemId) throw new Error('Selecciona un insumo.');
   const quantity = Number(input.quantity);
@@ -223,6 +246,12 @@ export async function addInventoryEntry(input) {
     updated_at: now,
     deleted_at: null,
   };
+  if (localEnabled()) {
+    const result = await localCommand('inventory.entry', input,
+      { id: movement.id, row: updatedItem, store: 'inventory', extraRows: [{ store: 'movements', row: movement }] });
+    await reload();
+    return { item: result, movement };
+  }
   await persist(STORES.INVENTORY, updatedItem);
   await persist(STORES.MOVEMENTS, movement);
   await reload();
@@ -230,6 +259,7 @@ export async function addInventoryEntry(input) {
 }
 
 export async function saveSupplier(input) {
+  requireRole();
   const name = String(input.name || '').trim();
   if (!name) throw new Error('El nombre del proveedor es obligatorio.');
   const now = new Date().toISOString();
@@ -252,6 +282,7 @@ export async function saveSupplier(input) {
 }
 
 export async function toggleSupplier(id) {
+  requireRole();
   const row = await dbGet(STORES.SUPPLIERS, id);
   if (!row) throw new Error('Proveedor no encontrado.');
   const updated = { ...row, active: !row.active, updated_at: new Date().toISOString() };
@@ -261,6 +292,7 @@ export async function toggleSupplier(id) {
 }
 
 export async function deleteSupplier(id) {
+  requireRole();
   const row = await dbGet(STORES.SUPPLIERS, id);
   if (!row) return false;
   const updated = { ...row, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
@@ -270,6 +302,8 @@ export async function deleteSupplier(id) {
 }
 
 export async function saveUser(input) {
+  requireRole();
+  if (localEnabled()) throw new Error('Las cuentas de red local se administran mediante Supabase Auth; edición de usuarios pendiente de integración.');
   const name = String(input.name || '').trim();
   const email = String(input.email || '').trim();
   const role = String(input.role || 'cajero');
@@ -281,7 +315,7 @@ export async function saveUser(input) {
   const existing = input.id ? users.find(row => row.id === input.id && !row.deleted_at) : null;
   const duplicate = users.find(row => row.id !== (existing && existing.id) && !row.deleted_at && normalize(row.email) === normalize(email));
   if (duplicate) throw new Error('Ya existe un usuario con ese correo.');
-  if (!existing && password.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres.');
+  if ((!existing || password) && password.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres.');
   const now = new Date().toISOString();
   let passwordSalt = existing ? existing.password_salt : randomSalt();
   let passwordHash = existing ? existing.password_hash : await hashPassword(password || DEMO_PASSWORD, passwordSalt);
@@ -303,6 +337,7 @@ export async function saveUser(input) {
     created_at: existing ? existing.created_at : now,
     updated_at: now,
     deleted_at: null,
+    remote_id: existing?.remote_id || null,
   };
   await persist(STORES.USERS, row);
   await reload();
@@ -310,6 +345,9 @@ export async function saveUser(input) {
 }
 
 export async function toggleUser(id) {
+  requireRole();
+  if (localEnabled()) throw new Error('Administra la cuenta desde Supabase Auth.');
+  if (state.user.id === id) throw new Error('No puedes desactivar tu propia sesión.');
   const row = await dbGet(STORES.USERS, id);
   if (!row) throw new Error('Usuario no encontrado.');
   const updated = { ...row, active: !row.active, updated_at: new Date().toISOString() };
@@ -319,6 +357,8 @@ export async function toggleUser(id) {
 }
 
 export async function deleteUser(id) {
+  requireRole();
+  if (localEnabled()) throw new Error('Administra la cuenta desde Supabase Auth.');
   const row = await dbGet(STORES.USERS, id);
   if (!row) return false;
   if (state.user && state.user.id === id) throw new Error('No puedes eliminar tu propio usuario.');
@@ -328,7 +368,14 @@ export async function deleteUser(id) {
   return true;
 }
 
-export async function createOrder({ items, customer, channel = 'Mostrador', paymentMethod = 'Efectivo', paid = true, status = 'Nueva' }) {
+export async function createOrder({ items, customer, channel = 'Mostrador', paymentMethod = 'Efectivo', paid = true, status = 'Nueva', cashSession = null, amountReceived = null }) {
+  requireRole(['admin', 'cajero']);
+  if (!localEnabled() && state.user.remote_id && !cashSession) throw new Error('Abre tu caja antes de registrar una venta.');
+  if (cashSession) {
+    const savedCash = await dbGet(STORES.CASH_SESSIONS, cashSession.id);
+    if (!savedCash || savedCash.estado !== 'abierta' || savedCash.deleted_at) throw new Error('La sesión de caja no está disponible. Actualiza su estado.');
+    cashSession = savedCash;
+  }
   const cleanItems = (items || []).filter(item => item && item.id);
   if (!cleanItems.length) throw new Error('Agrega al menos un producto al carrito.');
   const orderItems = cleanItems.map(item => ({
@@ -339,10 +386,16 @@ export async function createOrder({ items, customer, channel = 'Mostrador', paym
     qty: Number(item.qty) || 1,
   }));
   const totals = orderTotals(orderItems);
+  if (paid && !['Efectivo', 'Tarjeta', 'Transferencia'].includes(paymentMethod)) throw new Error('Selecciona un método de pago válido.');
+  if (paid && amountReceived != null && paymentMethod === 'Efectivo'
+      && (!Number.isFinite(Number(amountReceived)) || Number(amountReceived) < totals.total)) throw new Error('El efectivo recibido no cubre el total.');
+  if (cashSession && (cashSession.estado !== 'abierta' || cashSession.usuario_id !== (state.user.remote_id || state.user.id))) {
+    throw new Error('La caja no está abierta para este usuario.');
+  }
   const now = new Date().toISOString();
   const row = {
     id: uid(),
-    code: nextOrderCode(state.orders),
+    code: localEnabled() ? 'LOCAL-PENDIENTE' : nextOrderCode(state.orders),
     customer: String(customer || 'Mostrador').trim() || 'Mostrador',
     channel,
     items: orderItems,
@@ -354,10 +407,27 @@ export async function createOrder({ items, customer, channel = 'Mostrador', paym
     tax: totals.tax,
     total: totals.total,
     paid: Boolean(paid),
+    user_id: state.user.id,
+    remote_user_id: state.user.remote_id || null,
+    seller_name: state.user.name,
+    cash_session_id: cashSession && !cashSession.demo ? cashSession.id : null,
+    local_cash_session_id: cashSession?.id || null,
+    demo_sale: cashSession?.demo === true,
+    receipt_business: { business_name: state.settings.business_name, rnc: state.settings.rnc,
+      address: state.settings.address, phone: state.settings.phone },
+    amount_received: paid && paymentMethod === 'Efectivo' && amountReceived != null ? round2(Number(amountReceived)) : null,
+    change_due: paid && paymentMethod === 'Efectivo' && amountReceived != null ? round2(Number(amountReceived) - totals.total) : null,
     created_at: now,
     updated_at: now,
     deleted_at: null,
   };
+  if (localEnabled()) {
+    row.code = `LOCAL-${row.id.slice(0, 8).toUpperCase()}`;
+    row.user_id = state.user.id;
+    const result = await localCommand('order.create', { order: row }, { id: row.id, row, store: 'orders' });
+    await reload();
+    return result;
+  }
   await persist(STORES.ORDERS, row);
   await reload();
   return row;
@@ -366,6 +436,7 @@ export async function createOrder({ items, customer, channel = 'Mostrador', paym
 const STATUS_FLOW = { Nueva: 'Preparando', Preparando: 'Lista', Lista: 'Entregada' };
 
 export async function advanceOrder(id) {
+  requireRole(['admin', 'cajero', 'cocina']);
   const row = await dbGet(STORES.ORDERS, id);
   if (!row) throw new Error('Orden no encontrada.');
   const next = STATUS_FLOW[row.status];
@@ -376,12 +447,18 @@ export async function advanceOrder(id) {
     icon: next === 'Preparando' ? 'prep' : next === 'Lista' ? 'ready' : 'ready',
     updated_at: new Date().toISOString(),
   };
+  if (localEnabled()) {
+    const result = await localCommand('order.advance', { id, expectedStatus: row.status }, { row: updated, store: 'orders' });
+    await reload();
+    return result;
+  }
   await persist(STORES.ORDERS, updated);
   await reload();
   return updated;
 }
 
 export async function saveSettings(patch) {
+  requireRole();
   const current = state.settings || DEFAULT_SETTINGS;
   const next = {
     ...current,

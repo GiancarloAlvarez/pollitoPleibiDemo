@@ -11,7 +11,7 @@ function inventoryRow(item) {
     <td><strong>${item.stock} ${escapeHtml(item.unit)}</strong></td>
     <td>${item.min} ${escapeHtml(item.unit)}</td>
     <td>${low ? '<span class="low-pill"><i></i> Stock bajo</span>' : '<span class="active-pill"><i></i> En buen nivel</span>'}</td>
-    <td>${money(round2(Number(item.stock) * Number(item.unit_cost)))}</td>
+    ${state.role === 'admin' ? `<td>${money(round2(Number(item.stock) * Number(item.unit_cost)))}</td>` : ''}
   </tr>`;
 }
 
@@ -29,10 +29,10 @@ export function renderInventory() {
       <h1>Inventario</h1>
       <p class="muted">Monitorea insumos, costos y niveles mínimos.</p>
     </div>
-    <button class="primary-btn" data-nav="inventario/entrada">${icon('plus', 17)} Registrar entrada</button>
+    ${state.role === 'admin' ? `<button class="primary-btn" data-nav="inventario/entrada">${icon('plus', 17)} Registrar entrada</button>` : ''}
   </div>
   <div class="inventory-stats">
-    <div>${icon('package', 20)}<span>Valor del inventario<strong>${money(inventoryValue(state.inventory))}</strong></span></div>
+    ${state.role === 'admin' ? `<div>${icon('package', 20)}<span>Valor del inventario<strong>${money(inventoryValue(state.inventory))}</strong></span></div>` : ''}
     <div>${icon('bell', 20)}<span>Alertas de stock<strong class="danger-text">${alerts.length} ${alerts.length === 1 ? 'requiere atención' : 'requieren atención'}</strong></span></div>
     <div>${icon('arrow-up-right', 20)}<span>Movimientos del mes<strong>${movements.length} registrados</strong></span></div>
   </div>
@@ -42,7 +42,7 @@ export function renderInventory() {
       <div class="search-box">${icon('search', 17)}<input id="inventory-search" placeholder="Buscar insumo..." value="${escapeHtml(state.filters.inventorySearch)}" autocomplete="off"></div>
     </div>
     <table>
-      <thead><tr><th>Insumo</th><th>Categoría</th><th>Existencia</th><th>Mínimo</th><th>Estado</th><th>Valor</th></tr></thead>
+      <thead><tr><th>Insumo</th><th>Categoría</th><th>Existencia</th><th>Mínimo</th><th>Estado</th>${state.role === 'admin' ? '<th>Valor</th>' : ''}</tr></thead>
       <tbody>${filtered.length ? filtered.map(inventoryRow).join('') : '<tr><td colspan="6" class="table-empty">No hay insumos que coincidan con la búsqueda.</td></tr>'}</tbody>
     </table>
   </section>`;

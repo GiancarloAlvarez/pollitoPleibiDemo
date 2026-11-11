@@ -1,6 +1,6 @@
 import { icon } from '../components/icons.js';
 import {
-  money, formatDateLong, relativeTime, percentChange, formatPercent,
+  money, formatDateLong, relativeTime, percentChange, formatPercent, escapeHtml,
 } from '../core/utils.js';
 import {
   metrics, filterPaidOrders, yesterdayMetrics, salesSeries, paymentDistribution, lowStockItems,
@@ -34,7 +34,8 @@ function statCard({ iconName, label, value, trend, hint, color }) {
 }
 
 function statusBadge(status) {
-  return `<span class="status ${String(status).toLowerCase()}"><i></i>${status}</span>`;
+  const cls = ['Nueva', 'Preparando', 'Lista', 'Entregada', 'Anulada'].includes(status) ? status.toLowerCase() : 'nueva';
+  return `<span class="status ${cls}"><i></i>${escapeHtml(status)}</span>`;
 }
 
 function orderRow(order) {
@@ -42,8 +43,8 @@ function orderRow(order) {
   return `<div class="order-row">
     <div class="order-icon ${iconClass}">${icon('clipboard-list', 17)}</div>
     <div class="order-info">
-      <b>${order.code} <span>${order.customer}</span></b>
-      <small>${order.items_text}</small>
+      <b>${escapeHtml(order.code)} <span>${escapeHtml(order.customer)}</span></b>
+      <small>${escapeHtml(order.items_text)}</small>
     </div>
     <div class="order-time">${icon('clock-3', 13)} ${relativeTime(order.created_at)}</div>
     ${statusBadge(order.status)}
@@ -53,8 +54,8 @@ function orderRow(order) {
 function stockRow(item) {
   return `<div class="stock-row">
     <div class="stock-icon">${icon('package', 16)}</div>
-    <div><b>${item.name}</b><small>Stock mínimo: ${item.min} ${item.unit}</small></div>
-    <strong>${item.stock} ${item.unit}</strong>
+    <div><b>${escapeHtml(item.name)}</b><small>Stock mínimo: ${escapeHtml(item.min)} ${escapeHtml(item.unit)}</small></div>
+    <strong>${escapeHtml(item.stock)} ${escapeHtml(item.unit)}</strong>
     <span class="warning-dot">${icon('bell', 12)}</span>
   </div>`;
 }
@@ -75,7 +76,7 @@ export function renderDashboard() {
   return `<div class="welcome-row">
     <div>
       <p class="eyebrow">${formatDateLong(now)}</p>
-      <h1>${greeting()}, ${firstName()} <span>👋</span></h1>
+      <h1>${greeting()}, ${escapeHtml(firstName())} <span>👋</span></h1>
       <p class="muted">Aquí tienes el resumen de tu operación hoy.</p>
     </div>
     <button class="secondary-btn" data-nav="reportes">${icon('calendar-days', 17)} Este mes ${icon('chevron-down', 15)}</button>

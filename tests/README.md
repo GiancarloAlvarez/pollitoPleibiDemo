@@ -117,3 +117,16 @@ cuestión, sin cambiar la assert correspondiente.
 Las vistas de dashboard/charts no son parte del smoke test; se validan manualmente
 en la vista de trabajo cuando sea relevante. Los scripts de server/helpers no dependen
 de Supabase (pueden probarse offline).
+
+## 9. Auditoría reproducible (2026-11-02)
+
+La suite nueva está documentada en [audit/README.md](audit/README.md).
+Usa PostgreSQL embebido en memoria y navegadores aislados, sin credenciales ni
+escrituras remotas. Comandos: `npm run audit:unit`, `npm run audit:db`,
+`npm run audit:e2e`, `npm run audit:sync`.
+
+Línea base: 44 casos, 19 pasan, 21 fallan, 1 skip y 3 TODO. Esos fallos son
+hallazgos de la aplicación/esquema auditados; no se han corregido todavía.
+El resultado histórico del smoke no equivale a aprobación de seguridad ni a
+certificación del esquema actual. La suite remota anterior no fue ejecutada:
+contiene escrituras y varios nombres de campos que deben revisarse contra el DDL.

@@ -13,10 +13,13 @@ import { escapeHtml, initials } from './core/utils.js';
 import { destroyCharts } from './core/charts.js';
 import { exportReport } from './core/excel.js';
 import { configured, testConnection } from './core/supabase.js';
+import { initLocalService, localEnabled, localStatus } from './core/local-client.js';
+import { renderLocalStatus } from './components/local-status.js';
 
 import { renderLogin, bindLogin } from './views/login.view.js';
 import { renderDashboard, bindDashboard } from './views/dashboard.view.js';
 import { renderPos, bindPos } from './views/pos.view.js';
+import { renderOrders, bindOrders } from './views/orders.view.js';
 import { renderKitchen, bindKitchen } from './views/kitchen.view.js';
 import { renderProducts, bindProducts } from './views/products.view.js';
 import { renderProductForm, bindProductForm } from './views/product-form.view.js';
@@ -84,7 +87,8 @@ function shell(info, viewHtml) {
       <div class="location">${icon('store', 16)}<span>Food Truck Principal</span>${icon('chevron-down', 14)}</div>
       <nav aria-label="Navegación principal">
         ${navItem({ route: 'dashboard', label: 'Resumen', active: activeBase === 'dashboard', iconName: 'layout-dashboard', hide: !isAdmin })}
-        ${navItem({ route: 'pos', label: 'Punto de venta', active: activeBase === 'pos', iconName: 'shopping-cart' })}
+        ${navItem({ route: 'pos', label: 'Punto de venta', active: activeBase === 'pos', iconName: 'shopping-cart', hide: role === 'cocina' })}
+        ${navItem({ route: 'ordenes', label: 'Órdenes', active: activeBase === 'ordenes', iconName: 'receipt', hide: role === 'cocina' })}
         ${navItem({ route: 'cocina', label: 'Cocina', active: activeBase === 'cocina', iconName: 'chef-hat', badge: newOrders || null })}
         <div class="nav-label">GESTIÓN</div>
         ${navItem({ route: 'productos', label: 'Productos', active: activeBase === 'productos', iconName: 'package', hide: !isAdmin })}
@@ -118,7 +122,7 @@ function shell(info, viewHtml) {
           <div class="top-avatar">${escapeHtml(initials(user.name))}</div>
         </div>
       </header>
-      <div class="page-content" id="view-content">${viewHtml}</div>
+      <div class="page-content" id="view-content">${renderLocalStatus()}${viewHtml}</div>
       <footer>JyB Technology Solutions SRL <span>– Innovamos. Desarrollamos. Conectamos.</span></footer>
     </main>
   </div>`;
@@ -128,6 +132,7 @@ function viewMarkup(info) {
   switch (info.view) {
     case 'dashboard': return renderDashboard();
     case 'pos': return renderPos();
+    case 'orders': return renderOrders();
     case 'cocina': return renderKitchen();
     case 'products': return renderProducts();
     case 'product-form': return renderProductForm(info.mode, info.id);
@@ -149,6 +154,7 @@ function bindView(info) {
   switch (info.view) {
     case 'dashboard': bindDashboard(content); break;
     case 'pos': bindPos(content); break;
+    case 'orders': bindOrders(content); break;
     case 'cocina': bindKitchen(content); break;
     case 'products': bindProducts(content); break;
     case 'product-form': bindProductForm(content, info.mode, info.id); break;
@@ -256,7 +262,7 @@ function wireGlobalEvents() {
 
     const logoutButton = event.target.closest('[data-action="logout"]');
     if (logoutButton) {
-      handleLogout();
+      handleLogout().catch(error => showToast(error.message, 'error'));
       return;
     }
 
@@ -304,6 +310,11 @@ function wireGlobalEvents() {
     await reload();
     showToast('Datos sincronizados desde Supabase', 'success');
   });
+  window.addEventListener('lan:data', () => reload().catch(error => showToast(error.message, 'error')));
+  window.addEventListener('lan:status', () => {
+    const message = document.getElementById('lan-status-message');
+    if (message) message.textContent = localStatus().message;
+  });
   window.addEventListener('sync:toast', event => {
     const detail = event.detail || {};
     showToast(detail.message || 'Sincronización actualizada', detail.type || 'info', 3200);
@@ -329,6 +340,10 @@ async function handleRoute(result) {
 }
 
 async function logSupabaseStatus() {
+  if (localEnabled()) {
+    console.info('[LAN] Servicio local activo. Confirmación Supabase pendiente del módulo de sincronización.');
+    return;
+  }
   if (!configured()) {
     console.warn('[Supabase] NO conectado: faltan la URL o la anon key de configuración.');
     return;
@@ -340,6 +355,7 @@ async function logSupabaseStatus() {
 
 async function boot() {
   initTheme();
+  await initLocalService();
   try {
     await initRepo();
   } catch (error) {

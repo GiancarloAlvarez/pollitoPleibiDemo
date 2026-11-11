@@ -1,0 +1,14 @@
+import {writeFile} from 'node:fs/promises';import {fixture} from './database-harness.mjs';
+const db=await fixture();
+const sections=[
+ ['Tablas y RLS',"SELECT c.relname AS tabla,c.relrowsecurity AS rls FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' ORDER BY c.relname"],
+ ['Tipos enumerados',"SELECT t.typname AS tipo,string_agg(e.enumlabel,', ' ORDER BY e.enumsortorder) AS valores FROM pg_type t JOIN pg_enum e ON e.enumtypid=t.oid JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public' GROUP BY t.typname ORDER BY t.typname"],
+ ['Relaciones FK',"SELECT c.relname AS tabla,k.conname AS nombre,pg_get_constraintdef(k.oid) AS definicion FROM pg_constraint k JOIN pg_class c ON c.oid=k.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND k.contype='f' ORDER BY c.relname,k.conname"],
+ ['Indices, incluidos PK y UNIQUE',"SELECT tablename AS tabla,indexname AS nombre,indexdef AS definicion FROM pg_indexes WHERE schemaname='public' ORDER BY tablename,indexname"],
+ ['Triggers de usuario',"SELECT c.relname AS tabla,t.tgname AS nombre,pg_get_triggerdef(t.oid) AS definicion FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal ORDER BY c.relname,t.tgname"],
+ ['Funciones',"SELECT p.oid::regprocedure::text AS funcion,p.prosecdef AS security_definer,p.proconfig::text AS configuracion,has_function_privilege('anon',p.oid,'EXECUTE') AS anon_execute FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' ORDER BY p.proname"],
+ ['Vistas',"SELECT c.relname AS vista,c.reloptions::text AS opciones FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='v' ORDER BY c.relname"],
+ ['Politicas RLS',"SELECT tablename AS tabla,policyname AS nombre,roles::text AS roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' ORDER BY tablename,policyname"]
+];
+const escape=v=>String(v??'').replaceAll('|','\\|').replaceAll('\n',' ');
+try{let md='# Inventario SQL — base aislada de auditoría\n\nGenerado ejecutando el DDL en PGlite; **no es introspección del Supabase desplegado**.\nAdaptaciones y límites: [README de pruebas](../../tests/audit/README.md).\n\n';const counts={};for(const [title,sql]of sections){const{rows}=await db.query(sql);counts[title]=rows.length;md+=`## ${title} (${rows.length})\n\n`;if(rows.length){const keys=Object.keys(rows[0]);md+='| '+keys.join(' | ')+' |\n| '+keys.map(()=>'---').join(' | ')+' |\n';for(const row of rows)md+='| '+keys.map(k=>escape(row[k])).join(' | ')+' |\n';}md+='\n';}await writeFile(new URL('../../docs/auditoria/INVENTARIO_SQL.md',import.meta.url),md);console.log(JSON.stringify(counts));}finally{await db.close()}

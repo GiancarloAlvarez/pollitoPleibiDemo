@@ -5,6 +5,7 @@ import { state } from '../core/state.js';
 import { navigate, defaultRoute } from '../core/router.js';
 import { showToast } from '../components/toast.js';
 import { demoUsers, DEMO_PASSWORD } from '../data/seed.js';
+import { localEnabled, localStatus } from '../core/local-client.js';
 
 function demoRow(user) {
   return `<div class="demo-row">
@@ -60,14 +61,16 @@ export function renderLogin() {
           <div class="form-error" id="login-error" hidden aria-live="polite"></div>
           <button class="primary-btn login-btn" type="submit"><span id="login-submit-text">Iniciar sesión</span>${icon('chevron-right', 17)}</button>
         </form>
-        <details class="demo-credentials">
+        ${!localEnabled() || localStatus().demo ? `<details class="demo-credentials">
           <summary>${icon('sparkles', 15)} Credenciales de demostración ${icon('chevron-down', 15)}</summary>
           <div class="demo-list">
             ${demoUsers().map(demoRow).join('')}
             <small>Los datos viven en este dispositivo. Al configurar Supabase, la sesión y los cambios se sincronizan automáticamente.</small>
           </div>
-        </details>
-        <p class="privacy">${icon('lock', 12)} Tus datos están protegidos. Funciona offline y sincroniza con Supabase.</p>
+        </details>` : ''}
+        <p class="privacy">${icon('lock', 12)} ${localEnabled()
+          ? 'Servicio local de caja y cocina. Usa tu cuenta autorizada; los cambios de nube se muestran por separado.'
+          : 'Modo independiente. Los permisos remotos requieren una sesión Supabase válida.'}</p>
       </div>
     </section>
   </main>`;

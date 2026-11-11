@@ -3,6 +3,7 @@ import { uid } from './utils.js';
 import { getSupabaseConfig, isSupabaseConfigured } from '../config.js';
 import { upsertRow, deleteRow, pullRows, restRequest } from './supabase.js';
 import { toRemote, remoteDetailRowsFor, pagoRow, fromRemote, REMOTE_TABLES, PUSH_RANK } from './schema-map.js';
+import { localEnabled, localStatus, flushLocalCommands } from './local-client.js';
 
 const LAST_SYNC_KEY = 'last_sync';
 const PULL_TABLES = ['products', 'orders', 'inventory', 'suppliers', 'users', 'movements', 'settings'];
@@ -33,6 +34,12 @@ export function getSyncStatus() {
 
 export async function refreshPending() {
   try {
+    if (localEnabled()) {
+      const lan = localStatus();
+      setStatus({ state: lan.connected ? 'lan' : 'offline', pending: lan.pendingLocal,
+        pendingCloud: lan.pendingCloud, message: lan.message });
+      return lan.pendingLocal;
+    }
     const pending = await dbCount(STORES.OUTBOX);
     const configured = isSupabaseConfigured();
     const state = !configured ? 'local' : !navigator.onLine ? 'offline' : pending ? 'pending' : status.state === 'error' ? 'error' : 'synced';
@@ -54,6 +61,7 @@ export function renderBadge(element) {
     syncing: 'Sincronizando…',
     synced: 'Sincronizado',
     error: 'Error de sync',
+    lan: status.pending ? `${status.pending} pendientes LAN` : `Red local · ${status.pendingCloud || 0} pendientes nube`,
   };
   element.className = `sync-status ${status.state}`;
   element.innerHTML = `<i></i><span>${labels[status.state] || 'Modo local'}</span>`;
@@ -87,25 +95,43 @@ async function mapTable(logical) {
   return (config.tables && config.tables[logical]) || REMOTE_TABLES[logical] || logical;
 }
 
-async function pushOrderCompound(payload, attempt = 0) {
+async function pushOrderCompound(order, attempt = 0) {
+  if (order.demo_sale) throw new Error('Venta de caja demo: permanece local y no se envía al proyecto real.');
+  const payload = toRemote('orders', order);
+  if (attempt) delete payload.numero_orden;
+  const compound = remoteDetailRowsFor(order);
+  if (!compound.length) throw new Error('Orden sin detalles: se conserva pendiente para revisión.');
+  const payment = pagoRow(order);
   try {
     await upsertRow(await mapTable('orders'), payload, 'id');
   } catch (error) {
     const message = String((error && error.message) || '');
     if (attempt === 0 && message.includes('uq_ordenes_numero')) {
-      const fallback = { ...payload };
-      delete fallback.numero_orden;
-      await pushOrderCompound(fallback, 1);
+      await pushOrderCompound(order, 1);
       return;
     }
     throw error;
   }
-  const compound = remoteDetailRowsFor(payload);
   for (const detail of compound) {
     await upsertRow(await mapTable('order_details'), detail, 'id');
   }
-  const payment = pagoRow(payload);
   if (payment) await upsertRow(await mapTable('payments'), payment, 'id');
+  const table = await mapTable('orders');
+  const detailsTable = await mapTable('order_details');
+  const paymentsTable = await mapTable('payments');
+  const rows = await restRequest(`${table}?id=eq.${encodeURIComponent(order.id)}&select=*,${detailsTable}(*),${paymentsTable}(*)`);
+  const confirmed = rows?.[0];
+  const equivalent = (left, right) => left && typeof left === 'object'
+    ? Object.keys(left).length === Object.keys(right || {}).length && Object.entries(left).every(([key, value]) => equivalent(value, right?.[key]))
+    : String(left ?? '') === String(right ?? '');
+  const matches = (expected, actual) => actual && Object.entries(expected).every(([key, value]) =>
+    ['creado_en', 'updated_at', 'numero_orden'].includes(key) || equivalent(value, actual[key]));
+  if (!matches(payload, confirmed) || confirmed[detailsTable]?.length !== compound.length
+      || !compound.every(detail => matches(detail, confirmed[detailsTable]?.find(row => row.id === detail.id)))
+      || (payment ? confirmed[paymentsTable]?.length !== 1 || !matches(payment, confirmed[paymentsTable]?.find(row => row.id === payment.id))
+        : confirmed[paymentsTable]?.length !== 0)) {
+    throw new Error('Supabase no confirmó la orden completa; se conserva el pendiente.');
+  }
 }
 
 function pushUnsupported(entry, reason) {
@@ -127,6 +153,11 @@ async function pushOutbox() {
   let skipped = 0;
   for (const entry of entries) {
     const ctx = {};
+    // Conservar ventas demo para respaldo, sin enviarlas ni bloquear ventas reales.
+    if (entry.table === 'orders' && entry.payload.demo_sale) {
+      skipped += 1;
+      continue;
+    }
     try {
       if (entry.op === 'delete') {
         const key = entry.table === 'users' ? (entry.payload.remote_id || entry.payload.id) : entry.payload.id;
@@ -140,7 +171,8 @@ async function pushOutbox() {
         }
         await upsertRow(await mapTable('users'), toRemote('users', entry.payload, ctx), 'id');
       } else if (entry.table === 'orders') {
-        await pushOrderCompound(toRemote('orders', entry.payload, ctx));
+        const owner = usersById.get(String(entry.payload.user_id));
+        await pushOrderCompound({ ...entry.payload, remote_user_id: entry.payload.remote_user_id || owner?.remote_id || null });
       } else if (entry.table === 'movements') {
         const owner = entry.payload.user_id ? usersById.get(String(entry.payload.user_id)) : null;
         if (!owner || !owner.remote_id) {
@@ -180,6 +212,7 @@ async function pullChanges() {
   const meta = await dbGet(STORES.META, LAST_SYNC_KEY);
   const since = meta && meta.value ? meta.value : '1970-01-01T00:00:00.000Z';
   let changed = false;
+  const pending = await dbGetAll(STORES.OUTBOX);
   for (const logical of PULL_TABLES) {
     const table = await mapTable(logical);
     const select = logical === 'orders' ? '*,orden_detalles(*)' : '*';
@@ -187,6 +220,7 @@ async function pullChanges() {
     try {
       rows = await pullRows(table, since, select);
     } catch (error) {
+      if (logical === 'orders') throw error;
       if (error.status === 404) continue;
       if (error.status === 400 || error.status === 401 || error.status === 403) continue;
       throw error;
@@ -194,6 +228,7 @@ async function pullChanges() {
     if (!Array.isArray(rows) || !rows.length) continue;
     const prepared = [];
     for (const remote of rows) {
+      if (pending.some(entry => entry.table === logical && entry.payload.id === remote.id)) continue;
       const remoteTime = Date.parse(remote.updated_at || 0) || 0;
       const local = await findLocalRow(logical, remote);
       const localTime = Date.parse(local && local.updated_at ? local.updated_at : 0) || 0;
@@ -222,6 +257,10 @@ async function pullChanges() {
 }
 
 export async function syncNow(options = {}) {
+  if (localEnabled()) {
+    try { await flushLocalCommands(); await refreshPending(); return { ok: true, scope: 'lan', cloudConfirmed: false }; }
+    catch (error) { await refreshPending(); return { ok: false, reason: 'lan', error }; }
+  }
   if (status.syncing) return { ok: false, reason: 'busy' };
   if (!isSupabaseConfigured()) {
     await refreshPending();
@@ -244,9 +283,10 @@ export async function syncNow(options = {}) {
     await pushOutbox();
     await pullChanges();
     await refreshPending();
-    setStatus({ syncing: false, state: status.pending ? 'pending' : 'synced', message: 'Sincronizado con Supabase.' });
+    setStatus({ syncing: false, state: status.pending ? 'pending' : 'synced', message: status.pending
+      ? `${status.pending} operaciones permanecen locales o pendientes; las ventas demo no se envían.` : 'Sincronizado con Supabase.' });
     if (!options.silent) {
-      window.dispatchEvent(new CustomEvent('sync:toast', { detail: { message: 'Sincronización completada.', type: 'success' } }));
+      window.dispatchEvent(new CustomEvent('sync:toast', { detail: { message: status.message, type: status.pending ? 'warning' : 'success' } }));
     }
     return { ok: true };
   } catch (error) {
@@ -261,6 +301,11 @@ export async function syncNow(options = {}) {
 export async function initSync() {
   if (started) return;
   started = true;
+  if (localEnabled()) {
+    window.addEventListener('lan:status', () => refreshPending());
+    await refreshPending();
+    return;
+  }
   await refreshPending();
   window.addEventListener('online', () => {
     setStatus({ state: 'pending', message: 'Conexión restablecida.' });

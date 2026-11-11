@@ -9,6 +9,7 @@ import { getSupabaseConfig, saveSupabaseConfig } from '../config.js';
 import { syncNow, getSyncStatus, refreshPending } from '../core/sync.js';
 import { testConnection } from '../core/supabase.js';
 import { STORES, dbGetAll } from '../core/db.js';
+import { localEnabled, localStatus, flushLocalCommands } from '../core/local-client.js';
 
 const TABS = [
   ['business', 'Datos del negocio', 'store'],
@@ -20,7 +21,7 @@ const TABS = [
 
 const PERMISSIONS = [
   ['Resumen ejecutivo', true, false, false],
-  ['Punto de venta', true, true, true],
+  ['Punto de venta', true, true, false],
   ['Cocina', true, true, true],
   ['Inventario', true, true, true],
   ['Productos', true, false, false],
@@ -87,6 +88,19 @@ function rolesForm() {
 }
 
 function connectionForm() {
+  if (localEnabled()) {
+    const lan = localStatus();
+    return `<h3>Red local y cocina</h3>
+      <p>El PC conserva las operaciones y comunica caja y cocina por la red local.</p>
+      <div class="sync-panel-status">
+        <span>Servicio: <b>${lan.connected ? 'Disponible' : 'No disponible'}</b></span>
+        <span>Modo: <b>${lan.demo ? 'Demostración explícita' : 'Usuarios Auth con sesión local'}</b></span>
+        <span>Pendientes en este dispositivo: <b>${lan.pendingLocal}</b></span>
+        <span>Operaciones guardadas en PC pendientes de nube: <b>${lan.pendingCloud}</b></span>
+      </div>
+      <p class="form-hint">El envío de esta cola a Supabase pertenece al siguiente módulo. Los datos anteriores del modo independiente se conservan y no se importan automáticamente.</p>
+      <button type="button" class="primary-btn" data-action="refresh-lan">Actualizar y reenviar pendientes LAN</button>`;
+  }
   const config = getSupabaseConfig();
   const sync = getSyncStatus();
   return `<h3>Conexión y sincronización</h3>
@@ -136,6 +150,10 @@ export function renderConfig(tab = 'business') {
 }
 
 export function bindConfig(root, tab = 'business') {
+  root.querySelector('[data-action="refresh-lan"]')?.addEventListener('click', async () => {
+    try { await flushLocalCommands(); showToast('Estado de red local actualizado. La nube se confirma por separado.', 'success'); }
+    catch (error) { toastError(error); }
+  });
   root.querySelectorAll('[data-config-tab]').forEach(button => {
     button.addEventListener('click', () => {
       const next = button.getAttribute('data-config-tab');

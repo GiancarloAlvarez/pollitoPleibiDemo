@@ -1,6 +1,8 @@
 import { icon, renderIcons } from './icons.js';
+import { escapeHtml, money } from '../core/utils.js';
 
 let keyHandler = null;
+let returnFocus = null;
 
 export function closeModal() {
   const root = document.getElementById('modal-root');
@@ -9,12 +11,15 @@ export function closeModal() {
     document.removeEventListener('keydown', keyHandler);
     keyHandler = null;
   }
+  if (returnFocus?.isConnected) returnFocus.focus();
+  returnFocus = null;
 }
 
 export function openModal(config) {
   const root = document.getElementById('modal-root');
   if (!root) return;
   closeModal();
+  returnFocus = document.activeElement;
   const {
     eyebrow = 'FORMULARIO OPERATIVO',
     title = 'Formulario',
@@ -62,11 +67,18 @@ export function openModal(config) {
   });
   keyHandler = event => {
     if (event.key === 'Escape') close();
+    if (event.key === 'Tab') {
+      const fields = [...backdrop.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length);
+      const first = fields[0], last = fields[fields.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
   };
   document.addEventListener('keydown', keyHandler);
 
   form.addEventListener('submit', async event => {
     event.preventDefault();
+    if (submitBtn.disabled) return;
     errorBox.hidden = true;
     submitBtn.disabled = true;
     const original = submitBtn.textContent;
@@ -84,8 +96,8 @@ export function openModal(config) {
     }
   });
 
-  const firstField = form.querySelector('input, select, textarea');
-  if (firstField) setTimeout(() => firstField.focus(), 30);
+  const firstField = form.querySelector('input, select, textarea, button');
+  if (firstField) firstField.focus();
 }
 
 export function confirmAction(config) {
@@ -101,13 +113,13 @@ export function confirmAction(config) {
   });
 }
 
-export function openCheckoutModal({ total, defaultCustomer = 'Mostrador', onConfirm }) {
+export function openCheckoutModal({ total, totalAmount, defaultCustomer = 'Mostrador', onConfirm }) {
   openModal({
     eyebrow: 'FORMULARIO OPERATIVO',
     title: 'Completar orden',
     description: 'Confirma el método de pago.',
     body: `
-      <label>Cliente<input name="customer" required placeholder="Ej. Mostrador" value="${defaultCustomer}"></label>
+      <label>Cliente<input name="customer" required placeholder="Ej. Mostrador" value="${escapeHtml(defaultCustomer)}"></label>
       <label>Método de pago
         <select name="payment_method">
           <option>Efectivo</option>
@@ -115,12 +127,27 @@ export function openCheckoutModal({ total, defaultCustomer = 'Mostrador', onConf
           <option>Transferencia</option>
         </select>
       </label>
+      <label data-cash-field>Efectivo recibido (RD$)<input name="amount_received" type="number" min="0" step="0.01" value="${Number(totalAmount) || 0}"></label>
+      <p data-change-output aria-live="polite"></p>
       <div class="chart-legend"><span>Total a cobrar</span><strong>${total}</strong></div>`,
     confirmLabel: 'Cobrar orden',
     onConfirm: (data, form) => {
       const customer = String(data.get('customer') || '').trim();
       if (!customer) throw new Error('Indica el cliente o mostrador.');
-      return onConfirm({ customer, paymentMethod: String(data.get('payment_method') || 'Efectivo') }, form);
+      const paymentMethod = String(data.get('payment_method') || 'Efectivo');
+      const amountReceived = paymentMethod === 'Efectivo' ? Number(data.get('amount_received')) : null;
+      if (paymentMethod === 'Efectivo' && (!Number.isFinite(amountReceived) || amountReceived < totalAmount)) throw new Error('El efectivo recibido no cubre el total.');
+      return onConfirm({ customer, paymentMethod, amountReceived }, form);
     },
   });
+  const form = document.querySelector('#modal-root form');
+  const update = () => {
+    const cash = form.elements.payment_method.value === 'Efectivo';
+    form.querySelector('[data-cash-field]').hidden = !cash;
+    const change = Number(form.elements.amount_received.value) - Number(totalAmount);
+    form.querySelector('[data-change-output]').textContent = cash ? (change >= 0 ? `Cambio: ${money(change)}` : 'Efectivo insuficiente') : '';
+  };
+  form.addEventListener('input', update);
+  form.addEventListener('change', update);
+  update();
 }

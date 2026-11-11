@@ -198,9 +198,8 @@ export async function pullRows(table, since, select = '*') {
 
 export function remoteRole(user) {
   if (!user) return 'cajero';
-  return (user.app_metadata && user.app_metadata.role)
-    || (user.user_metadata && user.user_metadata.role)
-    || 'cajero';
+  const role = user.app_metadata && user.app_metadata.role;
+  return role === 'cocinero' ? 'cocina' : ['admin', 'cajero', 'cocina'].includes(role) ? role : 'cajero';
 }
 
 export function remoteName(user) {

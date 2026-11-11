@@ -8,12 +8,20 @@
     "server": "node --env-file=.env server.js",
     "test": "node --env-file=.env e2e-smoke.js",
     "test:remote": "node --env-file=.env supabase-integration.js",
-    "install-browsers": "npx playwright-core install chromium"
+    "install-browsers": "npx playwright-core install chromium",
+    "audit:unit": "node --test audit/calculations.test.mjs",
+    "audit:db": "node --test audit/database.test.mjs",
+    "audit:e2e": "node --test audit/scenarios.test.mjs",
+    "audit:sync": "node --test audit/sync.test.mjs",
+    "audit:sales": "node --test audit/cash-database.test.mjs audit/cash-receipt.test.mjs",
+    "test:local": "node --test audit/local-service.test.mjs audit/local-browser.test.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.57.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.14"
+  },
   "engines": {
     "node": ">=20"
   }

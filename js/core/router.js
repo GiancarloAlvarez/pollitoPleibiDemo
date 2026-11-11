@@ -3,7 +3,8 @@ import { state } from './state.js';
 export const ALLOWED = {
   login: ['admin', 'cajero', 'cocina'],
   dashboard: ['admin'],
-  pos: ['admin', 'cajero', 'cocina'],
+  pos: ['admin', 'cajero'],
+  ordenes: ['admin', 'cajero'],
   cocina: ['admin', 'cajero', 'cocina'],
   productos: ['admin'],
   inventario: ['admin', 'cajero', 'cocina'],
@@ -16,6 +17,7 @@ export const ALLOWED = {
 const VIEW_MAP = {
   dashboard: 'dashboard',
   pos: 'pos',
+  ordenes: 'orders',
   cocina: 'cocina',
   productos: 'products',
   inventario: 'inventory',
@@ -50,6 +52,9 @@ export function resolveRoute() {
   if (!isLogged && route.base !== 'login') return { redirect: 'login', route };
   if (isLogged && (!route.base || route.base === 'login')) return { redirect: defaultRoute(state.role), route };
   const allowed = ALLOWED[route.base];
+  if (isLogged && route.base === 'inventario' && route.parts[1] === 'entrada' && state.role !== 'admin') {
+    return { redirect: 'inventario', route, denied: true };
+  }
   if (isLogged && allowed && !allowed.includes(state.role)) {
     return { redirect: defaultRoute(state.role), route, denied: true };
   }
@@ -102,6 +107,7 @@ export function initRouter(onChange) {
 export const VIEW_LABELS = {
   dashboard: 'Resumen ejecutivo',
   pos: 'Punto de venta',
+  ordenes: 'Órdenes y comprobantes',
   cocina: 'Cocina',
   productos: 'Productos',
   inventario: 'Inventario',

@@ -6,6 +6,9 @@ import { createOrder } from '../core/repo.js';
 import { navigate } from '../core/router.js';
 import { showToast, toastError } from '../components/toast.js';
 import { openCheckoutModal } from '../components/modal.js';
+import { renderCashSession, bindCashSession } from '../components/cash-session.js';
+import { currentCashSession } from '../core/cash.js';
+import { localEnabled } from '../core/local-client.js';
 
 function cartTotals() {
   const subtotal = round2((state.cart || []).reduce((total, item) => total + Number(item.price) * Number(item.qty || 1), 0));
@@ -53,11 +56,11 @@ export function renderPos() {
 
   return `<div class="welcome-row compact">
     <div>
-      <p class="eyebrow">OPERACIÓN · CAJA #01</p>
+      <p class="eyebrow">OPERACIÓN · PUNTO DE VENTA</p>
       <h1>Punto de venta</h1>
       <p class="muted">Registra una nueva orden para tu cliente.</p>
     </div>
-    <div class="cash-status"><span class="live-dot"></span> Caja abierta <b>RD$ 12,500.00</b></div>
+    ${renderCashSession()}
   </div>
   <div class="pos-layout">
     <section class="pos-products panel">
@@ -111,6 +114,15 @@ function addToCart(productId) {
 }
 
 export function bindPos(root) {
+  bindCashSession(root);
+  let submitting = false;
+  const checkCash = () => {
+    if (!localEnabled() && !currentCashSession()) {
+      showToast('Abre tu caja antes de registrar la orden.', 'warning');
+      return false;
+    }
+    return true;
+  };
   const searchInput = root.querySelector('#pos-search');
   if (searchInput) {
     searchInput.addEventListener('input', event => {
@@ -161,7 +173,8 @@ export function bindPos(root) {
   });
 
   root.querySelector('[data-action="send-kitchen"]')?.addEventListener('click', async () => {
-    if (!state.cart.length) return;
+    if (!state.cart.length || submitting || !checkCash()) return;
+    submitting = true;
     try {
       const order = await createOrder({
         items: state.cart,
@@ -170,16 +183,18 @@ export function bindPos(root) {
         paymentMethod: 'Pendiente',
         paid: false,
         status: 'Nueva',
+        cashSession: currentCashSession(),
       });
       setCart([]);
       showToast(`Orden ${order.code} enviada a cocina`, 'success');
       navigate('cocina');
     } catch (error) {
       toastError(error);
-    }
+    } finally { submitting = false; }
   });
 
   root.querySelector('[data-action="checkout"]')?.addEventListener('click', () => {
+    if (!checkCash()) return;
     if (!state.cart.length) {
       showToast('Agrega productos antes de cobrar', 'warning');
       return;
@@ -187,7 +202,8 @@ export function bindPos(root) {
     const totals = cartTotals();
     openCheckoutModal({
       total: money(totals.total),
-      onConfirm: async ({ customer, paymentMethod }) => {
+      totalAmount: totals.total,
+      onConfirm: async ({ customer, paymentMethod, amountReceived }) => {
         const order = await createOrder({
           items: state.cart,
           customer,
@@ -195,10 +211,12 @@ export function bindPos(root) {
           paymentMethod,
           paid: true,
           status: 'Nueva',
+          cashSession: currentCashSession(),
+          amountReceived,
         });
         setCart([]);
-        showToast(`Orden ${order.code} cobrada correctamente`, 'success');
-        navigate('cocina');
+        showToast(`Cobro ${order.code} guardado. La sincronización se confirma por separado.`, 'success');
+        navigate('ordenes');
       },
     });
   });

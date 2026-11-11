@@ -1,0 +1,18 @@
+import http from 'node:http';import {readFile} from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import {chromium} from 'playwright-core';import {findExecutable} from '../helpers.js';import {DEMO_PASSWORD} from '../../js/data/seed.js';
+const ROOT=path.resolve(fileURLToPath(new URL('../../',import.meta.url)));
+export async function browserHarness({transport, realServiceWorker = false}={}){
+ const types={'.js':'text/javascript','.html':'text/html','.css':'text/css','.json':'application/json','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png'};
+ const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://localhost');const f=path.resolve(ROOT,'.'+(u.pathname==='/'?'/index.html':decodeURIComponent(u.pathname)));if(!f.startsWith(ROOT+path.sep)){res.writeHead(403).end();return}const body=await readFile(f);res.writeHead(200,{'Content-Type':types[path.extname(f)]||'application/octet-stream','Cache-Control':'no-store'}).end(body)}catch{res.writeHead(404).end()}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;const browser=await chromium.launch({executablePath:findExecutable(),headless:true});
+ return {async page(role='admin'){
+   const context=await browser.newContext({serviceWorkers:realServiceWorker?'allow':'block',timezoneId:'America/Santo_Domingo'});await context.addInitScript(()=>Object.defineProperty(navigator,'onLine',{value:false,configurable:true}));await context.route('**/*',r=>r.request().url().startsWith(base+'/')?r.continue():(transport?transport(r):r.abort()));const page=await context.newPage();await page.goto(base+'/#/login');await page.locator('#login-email').waitFor();await page.waitForTimeout(200);await page.locator('#login-email').fill(`${role}@pollitopleibi.do`);await page.locator('#login-password').fill(DEMO_PASSWORD);await page.locator('#login-password').press('Enter');await page.waitForSelector('.nav-item');return {page,close:()=>context.close()};
+ },async close(){await browser.close();await new Promise(r=>server.close(r))}};
+}
+export async function nav(page,route){await page.evaluate(r=>location.hash='#/'+r,route);await page.waitForTimeout(150)}
+export async function product(page,name){await nav(page,'productos/nuevo');await page.locator('input[name=name]').fill(name);await page.locator('input[name=price]').fill('100');await page.locator('input[name=cost]').fill('40');await page.locator('#product-form button[type=submit]').click();await page.waitForURL('**/#/productos');return page.evaluate(async name=>(await(await import('/js/core/db.js')).dbGetAll('products')).find(p=>p.name===name),name)}
+export async function sale(page,id,customer){await nav(page,'pos');
+ if(await page.getByRole('button',{name:'Abrir caja',exact:true}).count()){
+  await page.getByRole('button',{name:'Abrir caja',exact:true}).click();await page.locator('input[name=opening_amount]').fill('100');await page.locator('.modal-card button[type=submit]').click();await page.locator('.modal-card').waitFor({state:'detached'});
+ }
+ await page.evaluate(async()=>(await import('/js/core/state.js')).setCart([]));await page.locator(`[data-add-product="${id}"]`).click();await page.locator('[data-action=checkout]').click();await page.waitForSelector('.modal-card');await page.locator('input[name=customer]').fill(customer);await page.locator('.modal-card button[type=submit]').click();await page.waitForURL('**/#/ordenes');return page.evaluate(async name=>(await(await import('/js/core/db.js')).dbGetAll('orders')).find(o=>o.customer===name),customer)}

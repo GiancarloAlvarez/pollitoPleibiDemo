@@ -4,6 +4,7 @@ import {
 import {
   metrics, topProducts, paymentDistribution, inventoryValue,
 } from './analytics.js';
+import { requireRole } from './permissions.js';
 
 const XLSX = typeof window !== 'undefined' ? window.XLSX : null;
 
@@ -57,6 +58,8 @@ function salesRows(orders) {
     Fecha: formatDateTime(order.created_at),
     Cliente: order.customer,
     Canal: order.channel || '',
+    Vendedor: order.seller_name || 'Sin atribución histórica',
+    Caja: order.cash_session_id || order.local_cash_session_id || '',
     'Método de pago': order.payment_method,
     Estado: order.status,
     Productos: order.items_text,
@@ -161,6 +164,7 @@ function sheetFor(type, context) {
 }
 
 export function exportReport(type = 'all', rawContext = {}) {
+  requireRole();
   const context = baseContext(rawContext);
   const filename = `Pollito-Pleibi-${type === 'all' ? 'Reporte-Completo' : type}-${new Date().toISOString().slice(0, 10)}.xlsx`;
   if (!XLSX || !XLSX.utils) {

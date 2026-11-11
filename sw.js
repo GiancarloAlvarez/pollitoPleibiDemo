@@ -1,4 +1,4 @@
-const CACHE = 'pollito-pleibi-v1';
+const CACHE = 'pollito-pleibi-v3-caja-recibos';
 
 const ASSETS = [
   './',
@@ -10,19 +10,25 @@ const ASSETS = [
   './css/04-login.css',
   './css/05-responsive.css',
   './css/06-extras.css',
-  './assets/icons/icon.svg',
-  './assets/icons/apple-icon.png',
-  './assets/icons/icon-light-32x32.png',
-  './assets/icons/icon-dark-32x32.png',
+  './css/07-sales.css',
+  './assets/icons/pollito.svg',
+  './assets/icons/pollito-32.png',
+  './assets/icons/pollito-180.png',
+  './assets/icons/pollito-192.png',
+  './assets/icons/pollito-512.png',
   './assets/vendor/lucide.min.js',
   './assets/vendor/chart.umd.min.js',
   './assets/vendor/xlsx.full.min.js',
   './js/app.js',
   './js/config.js',
   './js/components/theme.js',
+  './js/components/local-status.js',
   './js/components/icons.js',
   './js/components/toast.js',
   './js/components/modal.js',
+  './js/components/cash-session.js',
+  './js/components/receipt.js',
+  './js/core/cash.js',
   './js/core/utils.js',
   './js/core/db.js',
   './js/core/state.js',
@@ -34,10 +40,14 @@ const ASSETS = [
   './js/core/auth.js',
   './js/core/supabase.js',
   './js/core/sync.js',
+  './js/core/schema-map.js',
+  './js/core/local-client.js',
+  './js/core/permissions.js',
   './js/data/seed.js',
   './js/views/login.view.js',
   './js/views/dashboard.view.js',
   './js/views/pos.view.js',
+  './js/views/orders.view.js',
   './js/views/kitchen.view.js',
   './js/views/products.view.js',
   './js/views/product-form.view.js',
@@ -62,7 +72,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+      .then(keys => Promise.all(keys.filter(key => key.startsWith('pollito-pleibi-') && key !== CACHE).map(key => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
@@ -72,6 +82,8 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // Nunca cachear sesiones, snapshots privados ni eventos SSE.
+  if (url.pathname.startsWith('/api/')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(

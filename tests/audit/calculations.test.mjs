@@ -1,0 +1,10 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {round2,calcTax} from '../../js/core/utils.js';
+test('ITBIS 18% de 99.99 y total',()=>{assert.equal(calcTax(99.99,.18),18);assert.equal(round2(99.99+calcTax(99.99,.18)),117.99)});
+test('ITBIS de 0.01 redondea a cero',()=>assert.equal(calcTax(.01,.18),0));
+test('Tasa cero y tasa configurable de 10%',()=>{assert.equal(calcTax(495,0),0);assert.equal(calcTax(495,.10),49.5)});
+test('Redondeo de límite decimal positivo',()=>{assert.equal(round2(1.005),1.01);assert.equal(round2(10.075),10.08)});
+test('Importe grande: tres unidades de 999999.99',()=>{const subtotal=round2(999999.99*3);assert.equal(subtotal,2999999.97);assert.equal(calcTax(subtotal,.18),539999.99);assert.equal(round2(subtotal+calcTax(subtotal,.18)),3539999.96)});
+test.todo('Descuentos: falta función de dominio para autorización, motivo y orden de aplicación antes de ITBIS');
+test.todo('Vuelto: falta función de dominio que rechace efectivo insuficiente y calcule cambio exacto');
+test.todo('Precio con ITBIS incluido por producto: falta implementación integrada');

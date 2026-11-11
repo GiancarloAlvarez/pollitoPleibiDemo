@@ -13,14 +13,20 @@
   "categories": ["business", "productivity", "food"],
   "icons": [
     {
-      "src": "assets/icons/icon.svg",
+      "src": "assets/icons/pollito.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "assets/icons/apple-icon.png",
-      "sizes": "180x180",
+      "src": "assets/icons/pollito-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/pollito-512.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     }

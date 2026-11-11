@@ -2,14 +2,15 @@ import { STORES, dbGetAll, dbPut } from './db.js';
 import { verifyPassword, hashPassword, randomSalt, normalize, uid } from './utils.js';
 import { queueChange } from './sync.js';
 import { configured, signIn as remoteSignIn, signOut as remoteSignOut, remoteRole, remoteName } from './supabase.js';
+import { localEnabled, localLogin, localLogout, restoreLocalSession } from './local-client.js';
 
 const SESSION_KEY = 'pollito-session';
 
 function readStorage(remember) {
   const raw = remember ? localStorage.getItem(SESSION_KEY) : sessionStorage.getItem(SESSION_KEY);
-  if (!raw && !remember) return localStorage.getItem(SESSION_KEY);
+  const fallback = !raw && !remember ? localStorage.getItem(SESSION_KEY) : raw;
   try {
-    return raw ? JSON.parse(raw) : null;
+    return fallback ? JSON.parse(fallback) : null;
   } catch (error) {
     return null;
   }
@@ -46,6 +47,11 @@ export function clearSession() {
 }
 
 export async function restoreSessionUser() {
+  if (localEnabled()) {
+    const user = await restoreLocalSession();
+    if (user) await (await import('./repo.js')).reload();
+    return user;
+  }
   const session = currentSession();
   if (!session || !session.userId) return null;
   const users = await dbGetAll(STORES.USERS);
@@ -74,6 +80,7 @@ async function cacheRemoteUser(remoteUser, password) {
       role_name: role === 'admin' ? 'Dueño / Administrador' : role === 'cocina' ? 'Cocinero' : 'Vendedor / Cajero',
       active: true,
       deleted_at: null,
+      remote_id: remoteUser.id || existing.remote_id || null,
       updated_at: new Date().toISOString(),
     };
     await dbPut(STORES.USERS, updated);
@@ -103,9 +110,15 @@ async function cacheRemoteUser(remoteUser, password) {
 }
 
 export async function login(email, password, remember = true) {
+  if (localEnabled()) {
+    const user = await localLogin(email, password);
+    await (await import('./repo.js')).reload();
+    return user;
+  }
   const normalized = normalize(email);
   const users = await dbGetAll(STORES.USERS);
   const local = users.find(row => normalize(row.email) === normalized && !row.deleted_at);
+  if (local?.active === false) throw new Error('Este usuario está desactivado.');
 
   if (configured() && navigator.onLine) {
     try {
@@ -126,7 +139,7 @@ export async function login(email, password, remember = true) {
         }
         throw new Error('Sin conexión y este usuario no está disponible en el dispositivo.');
       }
-      if (error.status === 400 && local) {
+      if (error.status === 400 && local && !local.remote_id) {
         const ok = await verifyPassword(password, local.password_salt, local.password_hash);
         if (ok && local.active !== false) {
           const updated = await touchAccess(local);
@@ -148,6 +161,7 @@ export async function login(email, password, remember = true) {
 }
 
 export async function logout() {
+  if (localEnabled()) return localLogout();
   clearSession();
   if (configured()) {
     try {

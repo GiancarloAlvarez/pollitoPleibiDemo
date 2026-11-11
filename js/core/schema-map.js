@@ -124,14 +124,18 @@ export function toRemote(table, row, ctx = {}) {
       const base = {
         id: row.id,
         cliente: String(row.customer || 'Mostrador'),
+        ...(row.remote_user_id ? { usuario_id: row.remote_user_id } : {}),
+        ...(row.cash_session_id ? { caja_sesion_id: row.cash_session_id } : {}),
+        ...(row.receipt_business ? { comprobante_negocio: row.receipt_business } : {}),
+        ...(row.amount_received != null ? { efectivo_recibido: row.amount_received, cambio: row.change_due } : {}),
         canal: mapCanal(row.channel),
         notas: row.note || null,
         subtotal: round2(Number(row.subtotal) || 0),
-        descuento: 0,
-        propina: 0,
+        descuento: round2(Number(row.discount) || 0),
+        propina: round2(Number(row.tip) || 0),
         itbis: round2(Number(row.tax) || 0),
         total: round2(Number(row.total) || 0),
-        pagado: row.paid !== false,
+        pagado: row.paid === true,
         metodo_pago: mapMetodo(row.payment_method),
         estado: ESTADOS[row.status] || 'nueva',
         creado_en: row.created_at || null,
@@ -184,12 +188,14 @@ export function toRemote(table, row, ctx = {}) {
 }
 
 export function pagoRow(order) {
-  if (order.paid === false) return null;
+  if (order.paid !== true) return null;
+  const method = mapMetodo(order.payment_method);
+  if (!method) throw new Error('La orden pagada no tiene un método válido.');
   if (!/^[0-9a-fA-F-]{36}$/.test(String(order.id || ''))) return null;
   return {
     id: `${String(order.id).slice(0, -4)}fffe`,
     orden_id: order.id,
-    metodo: mapMetodo(order.payment_method) || 'efectivo',
+    metodo: method,
     monto: round2(Number(order.total) || 0),
     creado_en: order.created_at || null,
     updated_at: order.updated_at || null,
@@ -272,6 +278,8 @@ export function fromRemote(table, remote, local = null) {
       };
     case 'orders': {
       const details = Array.isArray(remote.orden_detalles) ? remote.orden_detalles : [];
+      // Una cabecera sin líneas no acredita una venta completa.
+      if (!details.length && local?.items?.length) return local;
       const items = details.map(detail => ({
         product_id: detail.producto_id || null,
         name: detail.nombre_snapshot || 'Producto',
@@ -291,9 +299,21 @@ export function fromRemote(table, remote, local = null) {
         icon: status === 'Nueva' ? 'new' : status === 'Preparando' ? 'prep' : 'ready',
         payment_method: remote.metodo_pago ? `${remote.metodo_pago.charAt(0).toUpperCase()}${remote.metodo_pago.slice(1)}` : 'Pendiente',
         subtotal: Number(remote.subtotal) || 0,
+        discount: Number(remote.descuento) || 0,
+        tip: Number(remote.propina) || 0,
+        note: remote.notas || null,
         tax: Number(remote.itbis) || 0,
         total: Number(remote.total) || 0,
-        paid: remote.pagado !== false,
+        paid: remote.pagado === true,
+        user_id: local?.user_id || remote.usuario_id || null,
+        remote_user_id: remote.usuario_id || local?.remote_user_id || null,
+        seller_name: remote.vendedor_nombre || local?.seller_name || null,
+        cash_session_id: remote.caja_sesion_id || local?.cash_session_id || null,
+        local_cash_session_id: local?.local_cash_session_id || remote.caja_sesion_id || null,
+        receipt_business: remote.comprobante_negocio || local?.receipt_business || null,
+        amount_received: remote.efectivo_recibido ?? local?.amount_received ?? null,
+        change_due: remote.cambio ?? local?.change_due ?? null,
+        demo_sale: local?.demo_sale === true,
         created_at: remote.creado_en || (local && local.created_at) || null,
         updated_at: remote.updated_at || null,
         deleted_at: remote.deleted_at || null,
