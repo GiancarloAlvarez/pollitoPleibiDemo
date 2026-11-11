@@ -4,7 +4,7 @@ import { state, setCart, setFilter } from '../core/state.js';
 import { CATEGORIES } from '../data/seed.js';
 import { createOrder } from '../core/repo.js';
 import { navigate } from '../core/router.js';
-import { showToast, toastError } from '../components/toast.js';
+import { showToast } from '../components/toast.js';
 import { openCheckoutModal } from '../components/modal.js';
 import { renderCashSession, bindCashSession } from '../components/cash-session.js';
 import { currentCashSession } from '../core/cash.js';
@@ -95,8 +95,7 @@ export function renderPos() {
         <div><span>Subtotal</span><b>${money(totals.subtotal)}</b></div>
         <div><span>ITBIS <small>(${Math.round(totals.rate * 100)}%)</small></span><b>${money(totals.tax)}</b></div>
         <div class="total-line"><span>Total</span><strong>${money(totals.total)}</strong></div>
-        <button class="primary-btn" data-action="send-kitchen" ${state.cart.length ? '' : 'disabled'}>Enviar a cocina ${icon('chef-hat', 17)}</button>
-        <button class="secondary-btn full" data-action="checkout">Cobrar ahora ${icon('credit-card', 17)}</button>
+        <button class="primary-btn full" data-action="checkout" ${state.cart.length ? '' : 'disabled'}>Cobrar ahora ${icon('credit-card', 17)}</button>
       </div>
     </aside>
   </div>`;
@@ -115,7 +114,6 @@ function addToCart(productId) {
 
 export function bindPos(root) {
   bindCashSession(root);
-  let submitting = false;
   const checkCash = () => {
     if (!localEnabled() && !currentCashSession()) {
       showToast('Abre tu caja antes de registrar la orden.', 'warning');
@@ -170,27 +168,6 @@ export function bindPos(root) {
     }
     setCart([]);
     showToast('Carrito vaciado', 'success');
-  });
-
-  root.querySelector('[data-action="send-kitchen"]')?.addEventListener('click', async () => {
-    if (!state.cart.length || submitting || !checkCash()) return;
-    submitting = true;
-    try {
-      const order = await createOrder({
-        items: state.cart,
-        customer: 'Para llevar · Mostrador',
-        channel: 'Mostrador',
-        paymentMethod: 'Pendiente',
-        paid: false,
-        status: 'Nueva',
-        cashSession: currentCashSession(),
-      });
-      setCart([]);
-      showToast(`Orden ${order.code} enviada a cocina`, 'success');
-      navigate('cocina');
-    } catch (error) {
-      toastError(error);
-    } finally { submitting = false; }
   });
 
   root.querySelector('[data-action="checkout"]')?.addEventListener('click', () => {

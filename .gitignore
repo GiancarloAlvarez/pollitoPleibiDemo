@@ -3,7 +3,3 @@ tests/.env
 local-server/.env
 local-server/.data/
 local-server/.certs/
-AGENT.MD
-AGENTS.md
-docs
-

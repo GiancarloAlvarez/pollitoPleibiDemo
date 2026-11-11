@@ -21,6 +21,12 @@ function networkError(error) {
   return wrapped;
 }
 
+function sessionRequired() {
+  const error = new Error('No hay una sesión vigente de Supabase. Inicia sesión con tu cuenta de Supabase para sincronizar; una cuenta local/demo no autoriza escrituras. Los pendientes se conservan.');
+  error.code = 'AUTH_SESSION_REQUIRED';
+  return error;
+}
+
 async function parseResponse(response) {
   const text = await response.text();
   let data = null;
@@ -88,9 +94,16 @@ export async function accessToken() {
       const refreshed = await refreshSession();
       return refreshed ? refreshed.access_token : current.access_token;
     } catch (error) {
-      return current.access_token;
+      if (error.network) throw error;
+      // No reutilizar un token vencido tras un refresh rechazado.
+      if (error.status === 400 || error.status === 401 || error.status === 403) {
+        clearSession();
+        throw sessionRequired();
+      }
+      throw error;
     }
   }
+  if (current.expires_at && current.expires_at <= Date.now()) throw sessionRequired();
   return current.access_token;
 }
 
@@ -133,8 +146,18 @@ export async function testConnection() {
       headers: { apikey: config.anonKey, Authorization: `Bearer ${config.anonKey}` },
     });
     if (!response.ok) return { ok: false, message: `Supabase respondió ${response.status}.` };
-    return { ok: true, message: 'Conexión verificada con Supabase.' };
+    const token = await accessToken();
+    if (!token) return { ok: false, message: 'Supabase es accesible, pero no hay sesión de usuario. La clave anon no permite registrar ventas.' };
+    const userResponse = await fetch(`${config.url}/auth/v1/user`, { headers: { apikey: config.anonKey, Authorization: `Bearer ${token}` } });
+    if (!userResponse.ok) return { ok: false, message: 'Supabase rechazó la sesión. Cierra sesión y entra con tu cuenta remota.' };
+    const user = await userResponse.json();
+    const profiles = await restRequest(`perfiles?id=eq.${encodeURIComponent(user.id)}&select=id,rol,activo,deleted_at`, { token });
+    const profile = profiles?.[0];
+    if (!profile || profile.activo !== true || profile.deleted_at) return { ok: false, message: 'La sesión existe, pero falta un perfil activo en public.perfiles asociado al usuario de Auth.' };
+    if (!['admin', 'cajero'].includes(profile.rol)) return { ok: false, message: 'El perfil no tiene rol admin/cajero para registrar ventas.' };
+    return { ok: true, message: 'Sesión y perfil de ventas verificados. Las políticas de escritura se comprueban al sincronizar cada operación.' };
   } catch (error) {
+    if (error.code === 'AUTH_SESSION_REQUIRED') return { ok: false, message: error.message };
     return { ok: false, message: 'No se pudo alcanzar Supabase. Revisa la URL o tu conexión.' };
   }
 }
@@ -153,22 +176,34 @@ async function authHeaders(token) {
 export async function restRequest(path, options = {}) {
   const config = getSupabaseConfig();
   if (!config.url || !config.anonKey) throw new Error('Supabase no está configurado.');
+  const method = (options.method || 'GET').toUpperCase();
+  const token = options.token || await accessToken();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !token) throw sessionRequired();
   const headers = {
-    ...(await authHeaders(options.token)),
+    ...(await authHeaders(token)),
     ...(options.headers || {}),
   };
   if (options.prefer) headers.Prefer = options.prefer;
   let response;
   try {
     response = await fetch(`${config.url}/rest/v1/${path}`, {
-      method: options.method || 'GET',
+      method,
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
   } catch (error) {
     throw networkError(error);
   }
-  return parseResponse(response);
+  try {
+    return await parseResponse(response);
+  } catch (error) {
+    if (error.data?.code === '42501' && /row-level security/i.test(error.message)) {
+      const table = String(path).split('?')[0];
+      error.code = 'SUPABASE_RLS_DENIED';
+      error.message = `Supabase rechazó la operación por RLS en ${table}. Revisa el perfil activo, usuario_id = auth.uid() y las políticas SELECT/INSERT/UPDATE del upsert. Los pendientes se conservan.`;
+    }
+    throw error;
+  }
 }
 
 export async function upsertRow(table, row, keyField = 'id') {

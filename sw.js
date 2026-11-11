@@ -1,4 +1,4 @@
-const CACHE = 'pollito-pleibi-v3-caja-recibos';
+const CACHE = 'pollito-pleibi-v4-sesion-rls';
 
 const ASSETS = [
   './',
