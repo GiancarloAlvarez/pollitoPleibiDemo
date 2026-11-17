@@ -33,6 +33,22 @@ export function defaultRoute(role = state.role) {
   return 'dashboard';
 }
 
+export function canAccess(base, role = state.role) {
+  const allowed = ALLOWED[base];
+  return Boolean(allowed && allowed.includes(role));
+}
+
+export function canAccessRoute(route, role = state.role) {
+  if (!route || !route.base || !canAccess(route.base, role)) return false;
+  if (route.base === 'inventario' && route.parts?.[1] === 'entrada' && role !== 'admin') return false;
+  return true;
+}
+
+export function deniedRedirect(route) {
+  if (route?.base === 'inventario') return 'inventario';
+  return defaultRoute(state.role);
+}
+
 export function parseRoute() {
   const raw = String(window.location.hash || '').replace(/^#\/?/, '');
   const [pathPart, queryPart = ''] = raw.split('?');
@@ -52,11 +68,8 @@ export function resolveRoute() {
   if (!isLogged && route.base !== 'login') return { redirect: 'login', route };
   if (isLogged && (!route.base || route.base === 'login')) return { redirect: defaultRoute(state.role), route };
   const allowed = ALLOWED[route.base];
-  if (isLogged && route.base === 'inventario' && route.parts[1] === 'entrada' && state.role !== 'admin') {
-    return { redirect: 'inventario', route, denied: true };
-  }
-  if (isLogged && allowed && !allowed.includes(state.role)) {
-    return { redirect: defaultRoute(state.role), route, denied: true };
+  if (isLogged && allowed && !canAccessRoute(route, state.role)) {
+    return { redirect: deniedRedirect(route), route, denied: true };
   }
   if (isLogged && !allowed) return { redirect: defaultRoute(state.role), route };
   return { route };

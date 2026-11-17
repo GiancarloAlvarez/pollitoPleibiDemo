@@ -65,6 +65,60 @@ test('UI caja y recibo a 360, 768 y 1366; teclado y contraste del comprobante', 
   } finally { await session.close(); }
 });
 
+test('Cierre Z demo: arqueo, diferencia, persistencia y gasto posterior', async () => {
+  const session = await harness.page('cajero'); const p = session.page;
+  try {
+    const product = await p.evaluate(async () => (await import('/js/core/state.js')).state.products[0]);
+    const order = await sale(p, product.id, 'QA cierre');
+    const expected = Math.round((100 + Number(order.total)) * 100) / 100;
+    await nav(p, 'pos');
+    assert.match(await p.locator('.cash-status').innerText(), /100/);
+    await p.locator('[data-action=close-cash]').click();
+    const modal = p.locator('.modal-card');
+    await modal.waitFor();
+    const text = await modal.innerText();
+    assert.match(text, /Cobros en efectivo/);
+    assert.match(text, /Efectivo esperado/);
+    assert.equal(Number(await modal.locator('[name=declared]').inputValue()), expected);
+    await modal.locator('[name=declared]').fill(String(expected + 5));
+    assert.match(await modal.locator('[data-cash-difference]').innerText(), /5\.00/);
+    await modal.locator('[name=cash_notes]').fill('QA cierre');
+    await p.evaluate(() => { window.__prints = 0; HTMLIFrameElement.prototype.__defineGetter__('contentWindow', function () { return { focus() {}, print() { window.__prints++; } }; }); });
+    await modal.locator('button[type=submit]').click();
+    await p.locator('.cash-close-receipt').waitFor();
+    const z = await p.locator('.cash-close-receipt').innerText();
+    assert.match(z, /Cierre de caja \(Z\)/);
+    assert.match(z, /5\.00/);
+    assert.match(z, /DEMOSTRACIÓN/);
+    await p.locator('.modal-card button[type=submit]').click();
+    await p.waitForFunction(() => window.__prints === 1);
+    assert.match(await p.locator('#cash-close-print-frame').getAttribute('srcdoc'), /80mm auto/);
+    await p.keyboard.press('Escape');
+    const closed = await p.evaluate(async () => (await (await import('/js/core/db.js')).dbGetAll('cash_sessions')).find(row => row.estado === 'cerrada'));
+    assert.equal(Number(closed.monto_declarado), expected + 5);
+    assert.equal(Number(closed.diferencia), 5);
+    assert.equal(closed.notas, 'QA cierre');
+    await p.locator('[data-action=open-cash]').click();
+    await p.locator('[name=opening_amount]').fill('100');
+    await p.locator('.modal-card button[type=submit]').click();
+    await p.locator('.modal-card').waitFor({ state: 'detached' });
+    await p.locator('[data-action=cash-movement]').click();
+    await p.locator('[name=movement_type]').selectOption('gasto');
+    await p.locator('[data-cash-category]:not([hidden])').waitFor();
+    await p.locator('[name=category]').selectOption('Insumos');
+    await p.locator('[name=movement_amount]').fill('20');
+    await p.locator('[name=movement_concept]').fill('Compra QA');
+    await p.locator('.modal-card button[type=submit]').click();
+    await p.locator('.modal-card').waitFor({ state: 'detached' });
+    await p.locator('[data-action=open-cash]').click();
+    await p.locator('.modal-card').waitFor();
+    const arqueo = await p.locator('.modal-card').innerText();
+    assert.match(arqueo, /Gastos pagados de caja/);
+    assert.match(arqueo, /20\.00/);
+    assert.match(arqueo, /80\.00/);
+  } finally { await session.close(); }
+});
+
 test('Cobro: efectivo insuficiente no crea venta; recibido y cambio quedan históricos', async () => {
   const session = await harness.page('cajero'); const p = session.page;
   try {
@@ -131,10 +185,10 @@ test('PWA real: favicon nuevo y primera recarga offline con caja y órdenes', as
   try {
     await p.evaluate(() => navigator.serviceWorker.ready);
     await p.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    const cached = await p.evaluate(async () => {
-      const cache = await caches.open('pollito-pleibi-v3-caja-recibos');
-      return Promise.all(['./assets/icons/pollito.svg','./assets/icons/pollito-192.png','./js/components/receipt.js','./js/core/cash.js','./js/views/orders.view.js'].map(async path => !!await cache.match(path)));
-    });
+    const cached = await p.evaluate(async paths => {
+      const stores = await Promise.all((await caches.keys()).map(name => caches.open(name)));
+      return Promise.all(paths.map(async path => (await Promise.all(stores.map(cache => cache.match(path)))).some(Boolean)));
+    }, ['./assets/icons/pollito.svg','./assets/icons/pollito-192.png','./js/components/receipt.js','./js/core/cash.js','./js/views/orders.view.js']);
     assert.ok(cached.every(Boolean));
     await p.context().setOffline(true);
     await p.reload();
@@ -162,6 +216,10 @@ test('Caja remota simulada: timeout conserva ID; venta mapea caja, vendedor y co
   try {
     const result = await session.page.evaluate(async owner => {
       const {state} = await import('/js/core/state.js');
+      localStorage.setItem('pollito-supabase-session', JSON.stringify({
+        access_token: 'qa-access-token', refresh_token: 'qa-refresh-token',
+        expires_at: Date.now() + 3600000, user: {id: owner},
+      }));
       state.user = {...state.user,remote_id:owner};
       const {openCashSession} = await import('/js/core/cash.js');
       const {createOrder} = await import('/js/core/repo.js');

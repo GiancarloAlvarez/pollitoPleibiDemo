@@ -5,7 +5,7 @@ import { store, state } from './core/state.js';
 import { initRepo, reload } from './core/repo.js';
 import { restoreSessionUser, logout } from './core/auth.js';
 import {
-  initRouter, resolveRoute, viewInfo, viewLabel, navigate, defaultRoute,
+  initRouter, resolveRoute, viewInfo, viewLabel, navigate, defaultRoute, canAccessRoute,
 } from './core/router.js';
 import { lowStockItems, kitchenOrders } from './core/analytics.js';
 import { initSync, renderBadge, getSyncStatus, refreshPending, syncNow } from './core/sync.js';
@@ -201,6 +201,10 @@ function restoreFocus(snapshot) {
 
 function renderApp() {
   if (!root) return;
+  if (state.isLogged && state.route.base !== 'login' && !canAccessRoute(state.route, state.role)) {
+    navigate(defaultRoute(state.role));
+    return;
+  }
   const snapshot = captureFocus();
   destroyCharts();
   const info = viewInfo(state.route);

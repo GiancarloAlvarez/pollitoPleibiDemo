@@ -7,7 +7,7 @@ import { navigate } from '../core/router.js';
 import { showToast, toastError } from '../components/toast.js';
 import { getSupabaseConfig, saveSupabaseConfig } from '../config.js';
 import { syncNow, getSyncStatus, refreshPending } from '../core/sync.js';
-import { testConnection } from '../core/supabase.js';
+import { testConnection, checkCashSchema } from '../core/supabase.js';
 import { STORES, dbGetAll } from '../core/db.js';
 import { localEnabled, localStatus, flushLocalCommands } from '../core/local-client.js';
 
@@ -117,6 +117,7 @@ function connectionForm() {
     <div class="sync-actions">
       <button class="primary-btn" type="button" data-action="save-connection">${icon('save', 16)} Guardar conexión</button>
       <button class="secondary-btn" type="button" data-action="test-connection">${icon('database', 16)} Probar conexión</button>
+      <button class="secondary-btn" type="button" data-action="test-schema">${icon('receipt', 16)} Verificar esquema de caja</button>
       <button class="secondary-btn" type="button" data-action="sync-now">${icon('refresh-cw', 16)} Sincronizar ahora</button>
       <button class="secondary-btn" type="button" data-action="backup-local">${icon('download', 16)} Respaldo local</button>
     </div>
@@ -230,7 +231,12 @@ export function bindConfig(root, tab = 'business') {
 
   root.querySelector('[data-action="test-connection"]')?.addEventListener('click', async () => {
     const result = await testConnection();
-    showToast(result.message, result.ok ? 'success' : 'error', 3200);
+    showToast(result.message, result.ok ? (result.warning ? 'warning' : 'success') : 'error', 4200);
+  });
+
+  root.querySelector('[data-action="test-schema"]')?.addEventListener('click', async () => {
+    const result = await checkCashSchema();
+    showToast(result.message, result.ok ? 'success' : 'error', 5200);
   });
 
   root.querySelector('[data-action="sync-now"]')?.addEventListener('click', () => {

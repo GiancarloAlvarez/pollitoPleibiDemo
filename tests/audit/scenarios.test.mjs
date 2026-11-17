@@ -7,3 +7,20 @@ test('E3 anulación debe existir como acción operativa con motivo',async()=>{co
 test('E4 stock igual al mínimo debe activar alerta',async()=>{const{page:p,close}=await harness.page();try{await p.evaluate(async()=>(await import('/js/core/repo.js')).saveInventory({name:'QA E4 mínimo',stock:5,min:5,unit:'und',unit_cost:1}));await nav(p,'inventario');const row=await p.locator('tbody tr').filter({hasText:'QA E4 mínimo'}).innerText();assert.match(row,/Stock bajo/,'Stock mínimo se muestra en buen nivel')}finally{await close()}});
 test('E5 precio nuevo no modifica venta anterior',async()=>{const{page:p,close}=await harness.page();try{const pr=await product(p,'QA E5');const first=await sale(p,pr.id,'QA E5 antes');await nav(p,`productos/editar/${pr.id}`);await p.locator('input[name=price]').fill('150');await p.locator('#product-form button[type=submit]').click();await p.waitForURL('**/#/productos');const second=await sale(p,pr.id,'QA E5 después');const history=await p.evaluate(async id=>(await(await import('/js/core/db.js')).dbGet('orders',id)),first.id);assert.equal(history.items[0].price,100);assert.equal(history.total,118);assert.equal(second.items[0].price,150);assert.equal(second.total,177)}finally{await close()}});
 test('E6 cajero bloqueado tanto por ruta como por repositorio local',async()=>{const{page:p,close}=await harness.page('cajero');try{for(const route of ['dashboard','usuarios','reportes']){await nav(p,route);assert.equal(await p.evaluate(()=>location.hash),'#/pos')}const denied=await p.evaluate(async()=>{const r=await import('/js/core/repo.js');const{state}=await import('/js/core/state.js');try{await r.saveProduct({...state.products[0],price:496});return false}catch{return true}});assert.ok(denied,'La ruta bloquea, pero saveProduct acepta la llamada del cajero. No es una prueba de RLS remoto.')}finally{await close()}});
+test('E7 enlaces URL respetan la matriz de roles y subrutas',async()=>{
+ const cases=[
+  ['cajero','#/pos',['dashboard','usuarios','reportes','productos','proveedores','config','config/connection'],['pos','ordenes','cocina','inventario']],
+  ['cocina','#/cocina',['dashboard','pos','ordenes','usuarios','reportes','productos','proveedores','config'],['cocina','inventario']],
+ ];
+ for(const [role,fallback,blocked,allowed] of cases){
+  const{page:p,close}=await harness.page(role);
+  try{
+   for(const route of blocked){await nav(p,route);assert.equal(await p.evaluate(()=>location.hash),fallback,`${role} accedió a ${route}`)}
+   await nav(p,'inventario/entrada');
+   assert.equal(await p.evaluate(()=>location.hash),'#/inventario',`${role} accedió a inventario/entrada`);
+   for(const route of allowed){await nav(p,route);assert.equal(await p.evaluate(()=>location.hash),`#/${route}`,`${role} no pudo abrir ${route}`)}
+  }finally{await close()}
+ }
+ const{page:p,close}=await harness.page('admin');
+ try{for(const route of ['usuarios','config/roles','productos/nuevo','inventario/entrada']){await nav(p,route);assert.equal(await p.evaluate(()=>location.hash),`#/${route}`)}}finally{await close()}
+});

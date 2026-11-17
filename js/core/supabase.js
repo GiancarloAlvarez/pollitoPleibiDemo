@@ -16,9 +16,18 @@ function writeSession(session) {
 }
 
 function networkError(error) {
-  const wrapped = new Error(error && error.message ? error.message : 'Sin conexión con Supabase');
+  const detail = error && error.message ? ` (${error.message})` : '';
+  const wrapped = new Error(`No se pudo conectar con Supabase${detail}. Revisa la URL del proyecto, tu conexión y las reglas de red. Los pendientes se conservan.`);
   wrapped.network = true;
   return wrapped;
+}
+
+function schemaError(path, code, message) {
+  const target = String(path || '').split('?')[0];
+  const error = new Error(message);
+  error.code = code;
+  error.target = target;
+  return error;
 }
 
 function sessionRequired() {
@@ -155,10 +164,30 @@ export async function testConnection() {
     const profile = profiles?.[0];
     if (!profile || profile.activo !== true || profile.deleted_at) return { ok: false, message: 'La sesión existe, pero falta un perfil activo en public.perfiles asociado al usuario de Auth.' };
     if (!['admin', 'cajero'].includes(profile.rol)) return { ok: false, message: 'El perfil no tiene rol admin/cajero para registrar ventas.' };
-    return { ok: true, message: 'Sesión y perfil de ventas verificados. Las políticas de escritura se comprueban al sincronizar cada operación.' };
+    const schema = await checkCashSchema(token);
+    if (!schema.ok) return { ok: true, warning: true, message: `Conexión y perfil correctos, pero el módulo de caja no está listo: ${schema.message}` };
+    return { ok: true, message: 'Sesión, perfil de ventas y esquema de caja verificados. Las políticas de escritura se comprueban al sincronizar cada operación.' };
   } catch (error) {
     if (error.code === 'AUTH_SESSION_REQUIRED') return { ok: false, message: error.message };
-    return { ok: false, message: 'No se pudo alcanzar Supabase. Revisa la URL o tu conexión.' };
+    return { ok: false, message: error.message || 'No se pudo alcanzar Supabase. Revisa la URL o tu conexión.' };
+  }
+}
+
+export async function checkCashSchema(token) {
+  try {
+    const result = await restRequest('rpc/caja_estado_esquema', { method: 'POST', body: {}, token });
+    const expected = ['abrir_caja', 'cerrar_caja', 'resumen_caja', 'movimientos_caja', 'gastos_caja'];
+    const missing = expected.filter(key => result?.[key] !== true);
+    if (missing.length) {
+      return { ok: false, version: result?.version || null,
+        message: `faltan ${missing.join(', ')}. Aplica docs/supabase/20261117_caja_apertura_cierre.sql en Supabase.` };
+    }
+    return { ok: true, version: result.version || null, message: 'Esquema de caja actualizado.' };
+  } catch (error) {
+    if (error.code === 'SUPABASE_SCHEMA_OUTDATED' || error.status === 404) {
+      return { ok: false, message: 'falta la migración docs/supabase/20261117_caja_apertura_cierre.sql en Supabase.' };
+    }
+    return { ok: false, message: error.message || 'No se pudo verificar el esquema de caja.' };
   }
 }
 
@@ -197,10 +226,28 @@ export async function restRequest(path, options = {}) {
   try {
     return await parseResponse(response);
   } catch (error) {
-    if (error.data?.code === '42501' && /row-level security/i.test(error.message)) {
+    const code = error.data && typeof error.data === 'object' ? error.data.code : null;
+    if (code === 'PGRST202' || /could not find the function/i.test(error.message)) {
+      const fn = String(path).replace(/^rpc\//, '').split('?')[0];
+      throw schemaError(path, 'SUPABASE_SCHEMA_OUTDATED',
+        `La base de datos de Supabase no tiene la función ${fn}. Aplica la migración docs/supabase/20261117_caja_apertura_cierre.sql en el SQL Editor y espera a que PostgREST recargue el esquema. Los pendientes se conservan.`);
+    }
+    if (code === '42703') {
+      const column = (error.data && error.data.message) || error.message;
+      throw schemaError(path, 'SUPABASE_SCHEMA_OUTDATED',
+        `La base de datos tiene un esquema anterior: ${column}. Aplica la migración docs/supabase/20261117_caja_apertura_cierre.sql antes de sincronizar ventas con caja. No se descartaron pendientes.`);
+    }
+    if (code === '42P01') {
+      throw schemaError(path, 'SUPABASE_SCHEMA_OUTDATED',
+        `Falta una tabla en Supabase (${String(path).split('?')[0]}). Revisa que se haya ejecutado docs/supabase/schema_completo.sql y la migración de caja.`);
+    }
+    if (code === '42501' && /row-level security/i.test(error.message)) {
       const table = String(path).split('?')[0];
       error.code = 'SUPABASE_RLS_DENIED';
       error.message = `Supabase rechazó la operación por RLS en ${table}. Revisa el perfil activo, usuario_id = auth.uid() y las políticas SELECT/INSERT/UPDATE del upsert. Los pendientes se conservan.`;
+    } else if (error.status === 401 || code === 'PGRST301' || /jwt|token/i.test(error.message)) {
+      error.code = error.code || 'AUTH_SESSION_REQUIRED';
+      error.message = `Supabase rechazó la sesión (${error.message}). Cierra sesión y vuelve a entrar con tu cuenta remota.`;
     }
     throw error;
   }
