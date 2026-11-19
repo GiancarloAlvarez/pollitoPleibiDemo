@@ -1,7 +1,6 @@
 import { STORES, dbGetAll, dbPut } from './db.js';
 import { verifyPassword, hashPassword, randomSalt, normalize, uid } from './utils.js';
-import { queueChange } from './sync.js';
-import { configured, signIn as remoteSignIn, signOut as remoteSignOut, remoteRole, remoteName } from './supabase.js';
+import { configured, signIn as remoteSignIn, signOut as remoteSignOut, fetchProfile, clearSession as clearRemoteSession, remoteRole, remoteName } from './supabase.js';
 import { localEnabled, localLogin, localLogout, restoreLocalSession } from './local-client.js';
 
 const SESSION_KEY = 'pollito-session';
@@ -62,29 +61,38 @@ export async function restoreSessionUser() {
 async function touchAccess(user) {
   const updated = { ...user, last_access: new Date().toISOString(), updated_at: new Date().toISOString() };
   await dbPut(STORES.USERS, updated);
-  await queueChange('users', 'upsert', updated);
   return updated;
 }
 
-async function cacheRemoteUser(remoteUser, password) {
+function profileRole(profile, remoteUser) {
+  const role = profile && profile.rol;
+  if (role === 'cocinero' || role === 'cocina') return 'cocina';
+  if (role === 'admin' || role === 'cajero') return role;
+  return remoteRole(remoteUser);
+}
+
+function roleName(role) {
+  return role === 'admin' ? 'Dueño / Administrador' : role === 'cocina' ? 'Cocinero' : 'Vendedor / Cajero';
+}
+
+async function cacheRemoteUser(remoteUser, password, profile) {
   const email = normalize(remoteUser.email);
   const users = await dbGetAll(STORES.USERS);
   const existing = users.find(row => normalize(row.email) === email && !row.deleted_at);
-  const role = remoteRole(remoteUser);
-  const name = remoteName(remoteUser) || existing && existing.name || email.split('@')[0];
+  const role = profileRole(profile, remoteUser);
+  const name = (profile && profile.nombre) || remoteName(remoteUser) || (existing && existing.name) || email.split('@')[0];
   if (existing) {
     const updated = {
       ...existing,
       name,
       role,
-      role_name: role === 'admin' ? 'Dueño / Administrador' : role === 'cocina' ? 'Cocinero' : 'Vendedor / Cajero',
+      role_name: roleName(role),
       active: true,
       deleted_at: null,
       remote_id: remoteUser.id || existing.remote_id || null,
       updated_at: new Date().toISOString(),
     };
     await dbPut(STORES.USERS, updated);
-    await queueChange('users', 'upsert', updated);
     return updated;
   }
   const salt = randomSalt();
@@ -94,7 +102,7 @@ async function cacheRemoteUser(remoteUser, password) {
     name,
     email: remoteUser.email,
     role,
-    role_name: role === 'admin' ? 'Dueño / Administrador' : role === 'cocina' ? 'Cocinero' : 'Vendedor / Cajero',
+    role_name: roleName(role),
     password_salt: salt,
     password_hash: passwordHash,
     active: true,
@@ -105,7 +113,6 @@ async function cacheRemoteUser(remoteUser, password) {
     remote_id: remoteUser.id || null,
   };
   await dbPut(STORES.USERS, created);
-  await queueChange('users', 'upsert', created);
   return created;
 }
 
@@ -118,15 +125,12 @@ export async function login(email, password, remember = true) {
   const normalized = normalize(email);
   const users = await dbGetAll(STORES.USERS);
   const local = users.find(row => normalize(row.email) === normalized && !row.deleted_at);
-  if (local?.active === false) throw new Error('Este usuario está desactivado.');
 
   if (configured() && navigator.onLine) {
+    clearRemoteSession();
+    let session;
     try {
-      const session = await remoteSignIn(email.trim(), password);
-      const user = await cacheRemoteUser(session.user || { email, user_metadata: {} }, password);
-      const updated = await touchAccess(user);
-      establishSession(updated, remember);
-      return updated;
+      session = await remoteSignIn(email.trim(), password);
     } catch (error) {
       if (error.network) {
         if (local) {
@@ -139,15 +143,27 @@ export async function login(email, password, remember = true) {
         }
         throw new Error('Sin conexión y este usuario no está disponible en el dispositivo.');
       }
-      if (error.status === 400 && local && !local.remote_id) {
-        const ok = await verifyPassword(password, local.password_salt, local.password_hash);
-        if (ok && local.active !== false) {
-          const updated = await touchAccess(local);
-          establishSession(updated, remember);
-          return updated;
-        }
+      const message = String(error.message || '');
+      if (/email.*not.*confirmed/i.test(message)) {
+        throw new Error('Confirma tu correo en Supabase antes de iniciar sesión.');
       }
-      throw new Error(error.message || 'Credenciales inválidas.');
+      if (error.status === 400 || error.status === 401 || /invalid login credentials|invalid_grant/i.test(message)) {
+        throw new Error('Credenciales inválidas en Supabase. Verifica tu correo y contraseña.');
+      }
+      throw new Error(message || 'Credenciales inválidas.');
+    }
+    try {
+      const profile = await fetchProfile(session.user && session.user.id, session.access_token);
+      if (!profile || profile.activo !== true || profile.deleted_at) {
+        throw new Error('Tu cuenta de Supabase no tiene un perfil activo en public.perfiles. Pide al administrador que la cree o active.');
+      }
+      const user = await cacheRemoteUser(session.user || { email, user_metadata: {} }, password, profile);
+      const updated = await touchAccess(user);
+      establishSession(updated, remember);
+      return updated;
+    } catch (error) {
+      clearRemoteSession();
+      throw error;
     }
   }
 

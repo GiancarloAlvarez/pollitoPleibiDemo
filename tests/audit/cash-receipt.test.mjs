@@ -45,8 +45,8 @@ test('UI caja y recibo a 360, 768 y 1366; teclado y contraste del comprobante', 
     for (const [width, height] of [[360,800],[768,1024],[1366,768]]) {
       await p.setViewportSize({ width, height });
       await nav(p, 'pos');
-      assert.ok(await p.locator('[data-action=open-cash]').isVisible());
-      await p.locator('[data-action=open-cash]').click();
+      assert.ok(await p.locator('[data-action=close-cash]').isVisible());
+      await p.locator('[data-action=close-cash]').click();
       assert.ok((await p.locator('.modal-card').boundingBox()).width <= width);
       await p.keyboard.press('Escape');
       await nav(p, 'ordenes');
@@ -73,24 +73,34 @@ test('Cierre Z demo: arqueo, diferencia, persistencia y gasto posterior', async 
     const expected = Math.round((100 + Number(order.total)) * 100) / 100;
     await nav(p, 'pos');
     assert.match(await p.locator('.cash-status').innerText(), /100/);
-    await p.locator('[data-action=close-cash]').click();
+    for (const [width, height] of [[360, 800], [768, 1024], [1366, 768]]) {
+      await p.setViewportSize({width, height});
+      const button = p.getByRole('button', {name: 'Cerrar caja', exact: true});
+      assert.ok(await button.isVisible());
+      const box = await button.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= width);
+    }
+    await p.getByRole('button', {name: 'Cerrar caja', exact: true}).press('Enter');
     const modal = p.locator('.modal-card');
     await modal.waitFor();
     const text = await modal.innerText();
     assert.match(text, /Cobros en efectivo/);
     assert.match(text, /Efectivo esperado/);
-    assert.equal(Number(await modal.locator('[name=declared]').inputValue()), expected);
+    assert.equal(await modal.locator('[name=declared]').inputValue(), '');
+    assert.equal(await modal.locator('[name=declared]').evaluate(input => input.validity.valueMissing), true);
     await modal.locator('[name=declared]').fill(String(expected + 5));
     assert.match(await modal.locator('[data-cash-difference]').innerText(), /5\.00/);
     await modal.locator('[name=cash_notes]').fill('QA cierre');
     await p.evaluate(() => { window.__prints = 0; HTMLIFrameElement.prototype.__defineGetter__('contentWindow', function () { return { focus() {}, print() { window.__prints++; } }; }); });
     await modal.locator('button[type=submit]').click();
     await p.locator('.cash-close-receipt').waitFor();
+    assert.equal(await p.locator('.modal-card').count(), 1);
+    assert.equal(await modal.isVisible(), true);
     const z = await p.locator('.cash-close-receipt').innerText();
     assert.match(z, /Cierre de caja \(Z\)/);
     assert.match(z, /5\.00/);
     assert.match(z, /DEMOSTRACIÓN/);
-    await p.locator('.modal-card button[type=submit]').click();
+    await p.locator('[data-action=print-cash-close]').click();
     await p.waitForFunction(() => window.__prints === 1);
     assert.match(await p.locator('#cash-close-print-frame').getAttribute('srcdoc'), /80mm auto/);
     await p.keyboard.press('Escape');
@@ -110,7 +120,7 @@ test('Cierre Z demo: arqueo, diferencia, persistencia y gasto posterior', async 
     await p.locator('[name=movement_concept]').fill('Compra QA');
     await p.locator('.modal-card button[type=submit]').click();
     await p.locator('.modal-card').waitFor({ state: 'detached' });
-    await p.locator('[data-action=open-cash]').click();
+    await p.locator('[data-action=close-cash]').click();
     await p.locator('.modal-card').waitFor();
     const arqueo = await p.locator('.modal-card').innerText();
     assert.match(arqueo, /Gastos pagados de caja/);
@@ -221,7 +231,7 @@ test('Caja remota simulada: timeout conserva ID; venta mapea caja, vendedor y co
         expires_at: Date.now() + 3600000, user: {id: owner},
       }));
       state.user = {...state.user,remote_id:owner};
-      const {openCashSession} = await import('/js/core/cash.js');
+      const {openCashSession, closeCashSession} = await import('/js/core/cash.js');
       const {createOrder} = await import('/js/core/repo.js');
       const {toRemote} = await import('/js/core/schema-map.js');
       const id = crypto.randomUUID(); let failed = false;
@@ -230,9 +240,15 @@ test('Caja remota simulada: timeout conserva ID; venta mapea caja, vendedor y co
       const cash = await openCashSession(250,id);
       Object.defineProperty(navigator,'onLine',{value:false,configurable:true});
       const order = await createOrder({items:[{...state.products[0],qty:1}],paymentMethod:'Tarjeta',cashSession:cash});
-      return {failed, id, mapped:toRemote('orders',order)};
+      let closeError;
+      Object.defineProperty(navigator,'onLine',{value:true,configurable:true});
+      try { await closeCashSession({sessionId: id, declared: 250}); }
+      catch (error) { closeError = error.message; }
+      Object.defineProperty(navigator,'onLine',{value:false,configurable:true});
+      return {failed, id, closeError, mapped:toRemote('orders',order)};
     }, owner);
     assert.equal(result.failed,true);
+    assert.match(result.closeError, /órdenes pendientes de sincronizar/);
     assert.equal(requests.length,2);
     assert.deepEqual(requests[0],requests[1]);
     assert.equal(result.mapped.caja_sesion_id,result.id);

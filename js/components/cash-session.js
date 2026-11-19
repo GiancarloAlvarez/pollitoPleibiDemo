@@ -1,9 +1,9 @@
-import { openModal } from './modal.js';
+import { openModal, closeModal } from './modal.js';
 import {
   openCashSession, currentCashSession, refreshCashSessions, cashSummary,
   closeCashSession, registerCashMovement, registerCashExpense,
 } from '../core/cash.js';
-import { showCashClose } from './receipt.js';
+import { cashCloseMarkup, printCashClose } from './receipt.js';
 import { state } from '../core/state.js';
 import { reload } from '../core/repo.js';
 import { escapeHtml, money, uid, round2 } from '../core/utils.js';
@@ -24,11 +24,9 @@ export function renderCashSession() {
   return `<div class="cash-session-controls">
     <div class="cash-status">${statusText(cash)}</div>
     <small>${escapeHtml(state.user?.name || '')}</small>
-    <button class="secondary-btn" data-action="open-cash">${cash ? 'Consultar caja' : 'Abrir caja'}</button>
-    ${cash ? `
-      <button class="secondary-btn" data-action="cash-movement">Movimiento</button>
-      <button class="primary-btn" data-action="close-cash">Cerrar caja</button>
-    ` : ''}
+    ${cash ? '<button type="button" class="secondary-btn" data-action="close-cash">Cerrar caja</button>'
+      : '<button type="button" class="secondary-btn" data-action="open-cash">Abrir caja</button>'}
+    ${cash ? '<button class="secondary-btn" data-action="cash-movement">Movimiento</button>' : ''}
     ${state.user?.remote_id ? '<button class="secondary-btn" data-action="refresh-cash">Actualizar caja</button>' : ''}
   </div>`;
 }
@@ -60,8 +58,9 @@ function bindDifference(form, expected) {
   if (!declared || !output) return;
   const update = () => {
     const value = Number(declared.value);
-    if (!Number.isFinite(value)) {
-      output.textContent = 'Diferencia: indica un monto válido.';
+    if (!declared.value || !Number.isFinite(value) || !declared.validity.valid) {
+      output.textContent = 'Diferencia: indica el efectivo contado.';
+      output.classList.remove('danger-text');
       return;
     }
     const difference = round2(value - Number(expected || 0));
@@ -72,43 +71,73 @@ function bindDifference(form, expected) {
   update();
 }
 
-async function openArqueoModal(cash) {
-  try {
-    const summary = await cashSummary(cash);
-    openModal({
-      title: cash.demo ? 'Arqueo de caja demo' : 'Arqueo de caja',
-      confirmLabel: 'Entendido',
-      description: 'Vista previa del efectivo esperado. Aún no cierra la sesión.',
-      body: `${arqueoMarkup(summary)}
-        <p>Responsable: ${escapeHtml(state.user.name)}<br>
-          Apertura: ${escapeHtml(new Date(summary.fecha_apertura || cash.fecha_apertura).toLocaleString('es-DO'))}</p>`,
-    });
-  } catch (error) {
-    toastError(error);
+function renderClosedCashState(form, result) {
+  if (!form?.isConnected) return;
+  const arqueoView = form.querySelector('[data-cash-view="arqueo"]');
+  const zView = form.querySelector('[data-cash-view="z"]');
+  if (!zView) return;
+  const markup = cashCloseMarkup(
+    { ...result.row, business: state.settings },
+    result.summary,
+    state.user?.name,
+  );
+  zView.innerHTML = `<p class="form-hint">Cierre confirmado. Revisa el comprobante, imprime el Z o cierra esta ventana.</p>
+    <label>Formato<select name="z_paper"><option value="80">Ticket 80 mm</option><option value="58">Ticket 58 mm</option><option value="a4">A4</option></select></label>
+    <div class="cash-close-preview">${markup}</div>
+    <div class="cash-close-actions">
+      <button type="button" class="secondary-btn" data-action="dismiss-cash-close">Cerrar</button>
+      <button type="button" class="primary-btn" data-action="print-cash-close">Imprimir Z</button>
+    </div>`;
+  if (arqueoView) arqueoView.hidden = true;
+  zView.hidden = false;
+  const actions = form.querySelector(':scope > .modal-actions');
+  if (actions) {
+    actions.hidden = true;
+    actions.style.display = 'none';
   }
+  const heading = form.closest('.modal-card')?.querySelector('.modal-heading');
+  if (heading) {
+    const title = heading.querySelector('h2');
+    const description = heading.querySelector('p:not(.eyebrow)');
+    if (title) title.textContent = 'Cierre de caja (Z)';
+    if (description) description.textContent = 'El cierre quedó registrado. Revisa e imprime el comprobante.';
+  }
+  zView.querySelector('[data-action="print-cash-close"]')?.addEventListener('click', () => {
+    const paper = String(zView.querySelector('[name="z_paper"]')?.value || '80');
+    printCashClose(markup, paper);
+  });
+  zView.querySelector('[data-action="dismiss-cash-close"]')?.addEventListener('click', closeModal);
+  zView.querySelector('[data-action="print-cash-close"]')?.focus();
 }
 
-async function openCloseModal(cash) {
+async function openCashModal(cash) {
   try {
     const summary = await cashSummary(cash);
     openModal({
-      title: 'Cerrar caja',
+      title: cash.demo ? 'Cerrar caja demo' : 'Cerrar caja',
       confirmLabel: 'Confirmar cierre',
       danger: true,
-      description: 'Cuenta el efectivo físico e indica el monto declarado. El cierre queda registrado y no se edita.',
-      body: `${arqueoMarkup(summary)}
-        <label>Efectivo declarado (RD$)<input name="declared" type="number" min="0" max="99999999.99" step="0.01" value="${Number(summary.esperado) || 0}" required></label>
+      description: 'Revisa el arqueo, cuenta el efectivo físico e indica el monto declarado. El cierre queda registrado y no se edita.',
+      body: `<div data-cash-view="arqueo">${arqueoMarkup(summary)}
+        <p>Responsable: ${escapeHtml(state.user.name)}<br>
+          Apertura: ${escapeHtml(new Date(summary.fecha_apertura || cash.fecha_apertura).toLocaleString('es-DO'))}</p>
+        <label>Efectivo contado (RD$)<input name="declared" type="number" min="0" max="99999999.99" step="0.01" required></label>
         <p data-cash-difference class="form-hint" aria-live="polite"></p>
-        <label>Notas del cierre (opcional)<textarea name="cash_notes" maxlength="500" rows="2" placeholder="Observaciones del arqueo"></textarea></label>`,
-      onConfirm: async data => {
+        <label>Notas del cierre (opcional)<textarea name="cash_notes" maxlength="500" rows="2" placeholder="Observaciones del arqueo"></textarea></label>
+      </div>
+      <div data-cash-view="z" hidden></div>`,
+      onConfirm: async (data, form) => {
         const declared = String(data.get('declared') || '').trim();
         if (!declared) throw new Error('Indica el efectivo declarado.');
-        const result = await closeCashSession({ declared: Number(declared), notes: data.get('cash_notes') });
-        await reload();
+        const result = await closeCashSession({ sessionId: cash.id, declared: Number(declared), notes: data.get('cash_notes') });
+        try {
+          await reload();
+        } catch (error) {
+          showToast(`Cierre registrado, pero no se pudo actualizar la vista: ${error.message}`, 'warning');
+        }
         showToast('Cierre de caja registrado', 'success');
-        setTimeout(() => {
-          showCashClose(result.row, result.summary, state.settings, state.user?.name);
-        }, 40);
+        setTimeout(() => renderClosedCashState(form, result), 0);
+        return false;
       },
     });
     const form = document.querySelector('#modal-root form');
@@ -165,14 +194,6 @@ export function bindCashSession(root) {
     try { await refreshCashSessions(); await reload(); showToast('Caja actualizada', 'success'); }
     catch (error) { toastError(error); }
   });
-  root.querySelector('[data-action="close-cash"]')?.addEventListener('click', () => {
-    const cash = currentCashSession();
-    if (!cash) {
-      showToast('No hay una caja abierta para cerrar.', 'warning');
-      return;
-    }
-    openCloseModal(cash);
-  });
   root.querySelector('[data-action="cash-movement"]')?.addEventListener('click', () => {
     const cash = currentCashSession();
     if (!cash) {
@@ -181,12 +202,12 @@ export function bindCashSession(root) {
     }
     openMovementModal(cash);
   });
-  root.querySelector('[data-action="open-cash"]')?.addEventListener('click', () => {
+  root.querySelector('[data-action="close-cash"]')?.addEventListener('click', () => {
     const cash = currentCashSession();
-    if (cash) {
-      openArqueoModal(cash);
-      return;
-    }
+    if (cash) openCashModal(cash);
+    else showToast('No hay una caja abierta para cerrar.', 'warning');
+  });
+  root.querySelector('[data-action="open-cash"]')?.addEventListener('click', () => {
     const operationId = uid();
     openModal({ title: 'Abrir caja', confirmLabel: 'Confirmar apertura',
       description: state.user.remote_id ? 'Se confirmará una sesión propia en Supabase.' : 'Cuenta demo: esta caja y sus ventas permanecerán locales.',

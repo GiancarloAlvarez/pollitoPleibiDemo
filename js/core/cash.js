@@ -130,11 +130,13 @@ export async function cashSummary(session = currentCashSession()) {
   return result;
 }
 
-export async function closeCashSession({ declared, notes = null } = {}) {
+export async function closeCashSession({ sessionId, declared, notes = null } = {}) {
   requireRole(['admin', 'cajero']);
   if (localEnabled()) throw new Error('El cierre de caja LAN aún no está integrado.');
   const session = currentCashSession();
   if (!session) throw new Error('No hay una caja abierta para cerrar.');
+  if (sessionId && sessionId !== session.id) throw new Error('La caja abierta cambió. Vuelve a consultar el arqueo.');
+  if (declared == null || String(declared).trim() === '') throw new Error('Indica el efectivo contado.');
   const value = validAmount(declared, 'Monto declarado');
   const cleanNotes = String(notes || '').trim().slice(0, 500) || null;
   if (isDemoSession(session)) {
@@ -155,11 +157,15 @@ export async function closeCashSession({ declared, notes = null } = {}) {
     return { row: closed, summary: demoSummary(closed) };
   }
   requireOnline('Conéctate para confirmar el cierre de caja en Supabase.');
+  const pending = await dbGetAll(STORES.OUTBOX);
+  if (pending.some(entry => entry.table === 'orders' && entry.payload?.cash_session_id === session.id)) {
+    throw new Error('Esta caja tiene órdenes pendientes de sincronizar en este dispositivo. Sincronízalas antes de cerrar.');
+  }
   const result = await restRequest('rpc/cerrar_caja', {
     method: 'POST',
     body: { p_sesion_id: session.id, p_declarado: value, p_notas: cleanNotes },
   });
-  if (!result?.sesion_id || result.estado !== 'cerrada' || Number(result.monto_declarado) !== value) {
+  if (result?.sesion_id !== session.id || result.estado !== 'cerrada' || result.monto_declarado == null || Number(result.monto_declarado) !== value) {
     throw new Error('Supabase no confirmó el cierre. Reintenta el mismo arqueo.');
   }
   const row = { ...session, ...result, estado: 'cerrada' };

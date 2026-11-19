@@ -6,6 +6,7 @@ import { navigate, defaultRoute } from '../core/router.js';
 import { showToast } from '../components/toast.js';
 import { demoUsers, DEMO_PASSWORD } from '../data/seed.js';
 import { localEnabled, localStatus } from '../core/local-client.js';
+import { DEFAULT_SUPABASE, getSupabaseConfig, isSupabaseConfigured, saveSupabaseConfig } from '../config.js';
 
 function demoRow(user) {
   return `<div class="demo-row">
@@ -16,6 +17,9 @@ function demoRow(user) {
 
 export function renderLogin() {
   const dark = getTheme() === 'dark';
+  const remoteAuth = isSupabaseConfigured() && !localEnabled();
+  const config = getSupabaseConfig();
+  const usesCustomConnection = config.url !== DEFAULT_SUPABASE.url || config.anonKey !== DEFAULT_SUPABASE.anonKey;
   return `<main class="login-page">
     <button class="theme-login" data-action="toggle-theme" aria-label="${dark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}">${icon(dark ? 'sun' : 'moon', 18)}</button>
     <section class="login-brand">
@@ -61,16 +65,22 @@ export function renderLogin() {
           <div class="form-error" id="login-error" hidden aria-live="polite"></div>
           <button class="primary-btn login-btn" type="submit"><span id="login-submit-text">Iniciar sesión</span>${icon('chevron-right', 17)}</button>
         </form>
-        ${!localEnabled() || localStatus().demo ? `<details class="demo-credentials">
+        ${remoteAuth ? '<p class="form-hint">Supabase está configurado. Inicia sesión con el correo y la contraseña de tu cuenta de Supabase.</p>' : ''}
+        ${!remoteAuth && (!localEnabled() || localStatus().demo) ? `<details class="demo-credentials">
           <summary>${icon('sparkles', 15)} Credenciales de demostración ${icon('chevron-down', 15)}</summary>
           <div class="demo-list">
             ${demoUsers().map(demoRow).join('')}
-            <small>Los datos viven en este dispositivo. Al configurar Supabase, la sesión y los cambios se sincronizan automáticamente.</small>
+            <small>Los datos viven en este dispositivo. Para sincronizar necesitas una sesión de Supabase.</small>
           </div>
         </details>` : ''}
+        ${!localEnabled() && usesCustomConnection ? `<p class="form-hint">Este navegador usa una conexión de Supabase distinta a la del proyecto.</p>
+          <button type="button" class="link-btn" data-action="restore-supabase">Usar Supabase del proyecto</button>` : ''}
         <p class="privacy">${icon('lock', 12)} ${localEnabled()
           ? 'Servicio local de caja y cocina. Usa tu cuenta autorizada; los cambios de nube se muestran por separado.'
-          : 'Modo independiente. Los permisos remotos requieren una sesión Supabase válida.'}</p>
+          : remoteAuth
+            ? 'El acceso requiere un perfil activo en Supabase.'
+            : 'Modo independiente. Solo admite cuentas locales.'}</p>
+        ${!remoteAuth && !localEnabled() ? '<button type="button" class="link-btn" data-action="enable-supabase">Activar Supabase</button>' : ''}
       </div>
     </section>
   </main>`;
@@ -98,6 +108,21 @@ export function bindLogin(root) {
 
   root.querySelector('[data-action="forgot"]').addEventListener('click', () => {
     setError('Te enviaremos un enlace de recuperación cuando conectes el correo de Supabase.');
+  });
+
+  const activateSupabase = patch => {
+    try {
+      saveSupabaseConfig(patch);
+      location.reload();
+    } catch {
+      setError('No se pudo guardar la conexión. Revisa el almacenamiento del navegador.');
+    }
+  };
+  root.querySelector('[data-action="enable-supabase"]')?.addEventListener('click', () => {
+    activateSupabase({ enabled: true });
+  });
+  root.querySelector('[data-action="restore-supabase"]')?.addEventListener('click', () => {
+    activateSupabase(DEFAULT_SUPABASE);
   });
 
   root.querySelectorAll('[data-demo]').forEach(button => {

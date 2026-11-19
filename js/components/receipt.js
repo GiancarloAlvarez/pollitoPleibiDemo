@@ -52,27 +52,17 @@ export function cashCloseMarkup(session, summary, seller) {
   </article>`;
 }
 
-export function showCashClose(session, summary, business, seller) {
-  const withBusiness = { ...session, business };
-  const markup = cashCloseMarkup(withBusiness, summary, seller);
-  openModal({
-    title: 'Cierre de caja', description: 'Revisa el arqueo e imprime el cierre Z. El cierre ya quedó registrado.',
-    body: `<label>Formato<select name="paper"><option value="80">Ticket 80 mm</option><option value="58">Ticket 58 mm</option><option value="a4">A4</option></select></label>${markup}`,
-    confirmLabel: 'Imprimir Z',
-    cancelLabel: 'Cerrar',
-    onConfirm: data => {
-      const paper = ['58', '80'].includes(String(data.get('paper'))) ? String(data.get('paper')) : 'a4';
-      document.getElementById('cash-close-print-frame')?.remove();
-      const frame = document.createElement('iframe');
-      frame.id = 'cash-close-print-frame'; frame.title = 'Impresión del cierre de caja';
-      frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;border:0';
-      frame.srcdoc = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de caja</title>
-        <style>@page{size:${paper === 'a4' ? 'A4' : `${paper}mm auto`};margin:4mm}body{font:12px Arial,sans-serif;color:#111;background:white;margin:0}.commercial-receipt{max-width:${paper === 'a4' ? '190mm' : `${Number(paper) - 8}mm`};margin:auto;overflow-wrap:anywhere}h2,h3,p{margin:8px 0}header,footer{text-align:center}table{width:100%;border-collapse:collapse;font-size:11px}th,td{text-align:right;padding:4px 1px;border-bottom:1px solid #aaa}td:first-child{text-align:left}</style></head><body>${markup}</body></html>`;
-      frame.onload = () => { frame.contentWindow.focus(); frame.contentWindow.print(); };
-      document.body.appendChild(frame);
-      return false;
-    },
-  });
+export function printCashClose(markup, paper = '80') {
+  const size = ['58', '80'].includes(String(paper)) ? String(paper) : 'a4';
+  document.getElementById('cash-close-print-frame')?.remove();
+  const frame = document.createElement('iframe');
+  frame.id = 'cash-close-print-frame'; frame.title = 'Impresión del cierre de caja';
+  frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10000px;border:0';
+  frame.srcdoc = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de caja</title>
+    <style>@page{size:${size === 'a4' ? 'A4' : `${size}mm auto`};margin:4mm}body{font:12px Arial,sans-serif;color:#111;background:white;margin:0}.commercial-receipt{max-width:${size === 'a4' ? '190mm' : `${Number(size) - 8}mm`};margin:auto;overflow-wrap:anywhere}h2,h3,p{margin:8px 0}header,footer{text-align:center}table{width:100%;border-collapse:collapse;font-size:11px}th,td{text-align:right;padding:4px 1px;border-bottom:1px solid #aaa}td:first-child{text-align:left}</style></head><body>${markup}</body></html>`;
+  frame.onload = () => { frame.contentWindow.focus(); frame.contentWindow.print(); };
+  document.body.appendChild(frame);
+  return true;
 }
 
 export function showReceipt(order, seller) {

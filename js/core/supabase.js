@@ -147,6 +147,12 @@ export async function signOut() {
   clearSession();
 }
 
+export async function fetchProfile(userId, token) {
+  if (!userId) return null;
+  const rows = await restRequest(`perfiles?id=eq.${encodeURIComponent(userId)}&select=id,nombre,rol,activo,deleted_at`, { token });
+  return rows?.[0] || null;
+}
+
 export async function testConnection() {
   const config = getSupabaseConfig();
   if (!config.url || !config.anonKey) return { ok: false, message: 'Configura la URL y la anon key.' };
@@ -160,8 +166,7 @@ export async function testConnection() {
     const userResponse = await fetch(`${config.url}/auth/v1/user`, { headers: { apikey: config.anonKey, Authorization: `Bearer ${token}` } });
     if (!userResponse.ok) return { ok: false, message: 'Supabase rechazó la sesión. Cierra sesión y entra con tu cuenta remota.' };
     const user = await userResponse.json();
-    const profiles = await restRequest(`perfiles?id=eq.${encodeURIComponent(user.id)}&select=id,rol,activo,deleted_at`, { token });
-    const profile = profiles?.[0];
+    const profile = await fetchProfile(user.id, token);
     if (!profile || profile.activo !== true || profile.deleted_at) return { ok: false, message: 'La sesión existe, pero falta un perfil activo en public.perfiles asociado al usuario de Auth.' };
     if (!['admin', 'cajero'].includes(profile.rol)) return { ok: false, message: 'El perfil no tiene rol admin/cajero para registrar ventas.' };
     const schema = await checkCashSchema(token);

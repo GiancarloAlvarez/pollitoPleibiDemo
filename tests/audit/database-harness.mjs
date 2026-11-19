@@ -4,19 +4,19 @@ export const ids={admin:'00000000-0000-4000-8000-000000000001',cajero:'00000000-
 export const source=await readFile(new URL('../../docs/supabase/schema_completo.sql',import.meta.url),'utf8');
 // PGlite dispone de gen_random_uuid() nativo; no se instala pgcrypto.
 export const withoutExtension=sql=>sql.replace(/^CREATE EXTENSION IF NOT EXISTS pgcrypto;\s*$/m,'');
-export async function fixture(){
+export async function fixture({ fullSchema = false } = {}){
  const db=new PGlite();
  await db.exec(`CREATE SCHEMA auth; CREATE SCHEMA extensions;
  CREATE ROLE anon NOLOGIN NOBYPASSRLS; CREATE ROLE authenticated NOLOGIN NOBYPASSRLS;
- CREATE TABLE auth.users(id uuid PRIMARY KEY,email text);
+ CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,raw_app_meta_data jsonb DEFAULT '{}'::jsonb,raw_user_meta_data jsonb DEFAULT '{}'::jsonb,email_confirmed_at timestamptz,created_at timestamptz DEFAULT now());
  CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
  $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
  GRANT USAGE ON SCHEMA auth,extensions TO anon,authenticated;
  SELECT set_config('pollito.qa_fixture','isolated-qa',false);`);
  // Solo DDL de la fuente: excluye seed comercial y texto final no SQL.
  // No modifica políticas, funciones, triggers, vistas ni constraints.
- const ddl=source.slice(0,source.indexOf('-- 21. SEED'));
- try{await db.exec(withoutExtension(ddl));await db.exec(await readFile(new URL('seed-test.sql',import.meta.url),'utf8'));}
+ const ddl=fullSchema ? source : source.slice(0,source.indexOf('-- 21. SEED'));
+ try{await db.exec(withoutExtension(ddl));if(!fullSchema)await db.exec(await readFile(new URL('seed-test.sql',import.meta.url),'utf8'));}
  catch(e){await db.close();throw new Error('No se pudo preparar fixture: '+e.message);}
  return db;
 }

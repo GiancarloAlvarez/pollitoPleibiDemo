@@ -5,14 +5,16 @@ DO $$ BEGIN
   END IF;
 END $$;
 
-INSERT INTO auth.users (id,email) VALUES
-('00000000-0000-4000-8000-000000000001','admin@qa.invalid'),
-('00000000-0000-4000-8000-000000000002','cajero@qa.invalid'),
-('00000000-0000-4000-8000-000000000003','cocina@qa.invalid');
-INSERT INTO perfiles (id,nombre,rol) VALUES
-('00000000-0000-4000-8000-000000000001','QA Admin','admin'),
-('00000000-0000-4000-8000-000000000002','QA Cajero','cajero'),
-('00000000-0000-4000-8000-000000000003','QA Cocina','cocinero');
+INSERT INTO auth.users (id,email,raw_app_meta_data) VALUES
+('00000000-0000-4000-8000-000000000001','admin@qa.invalid','{"role":"admin"}'::jsonb),
+('00000000-0000-4000-8000-000000000002','cajero@qa.invalid','{"role":"cajero"}'::jsonb),
+('00000000-0000-4000-8000-000000000003','cocina@qa.invalid','{"role":"cocina"}'::jsonb);
+INSERT INTO perfiles (id,nombre,rol,activo) VALUES
+('00000000-0000-4000-8000-000000000001','QA Admin','admin',true),
+('00000000-0000-4000-8000-000000000002','QA Cajero','cajero',true),
+('00000000-0000-4000-8000-000000000003','QA Cocina','cocinero',true)
+ON CONFLICT (id) DO UPDATE SET
+  nombre = EXCLUDED.nombre, rol = EXCLUDED.rol, activo = EXCLUDED.activo, deleted_at = NULL;
 INSERT INTO categorias(id,nombre) VALUES ('40000000-0000-4000-8000-000000000001','QA Menú');
 INSERT INTO proveedores(id,nombre_empresa) VALUES
 ('30000000-0000-4000-8000-000000000001','QA Alimentos'),
